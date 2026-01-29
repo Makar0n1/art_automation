@@ -1,0 +1,305 @@
+version: '3.8'
+
+# =============================================================================
+# SEO Articles Production Stack
+# =============================================================================
+#
+# Prerequisites:
+# 1. Docker & Docker Compose installed
+# 2. .env file configured (run ./setup.sh first)
+# 3. Domains pointing to this server
+#
+# Usage:
+#   ./setup.sh        # First time setup
+#   ./deploy.sh       # Update/redeploy
+#   docker compose ps # Check status
+#
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # NGINX PROXY MANAGER - Reverse Proxy with SSL
+  # ===========================================================================
+  # Only service with external ports (80, 443, 81)
+  # Admin UI: http://SERVER_IP:81 (Default: admin@example.com / changeme)
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: seo-npm
+    restart: unless-stopped
+    ports:
+      - '80:80'      # HTTP
+      - '443:443'    # HTTPS
+      - '81:81'      # NPM Admin UI (remove after setup for security)
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - seo_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:81/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================================================
+  # DATABASE - MongoDB
+  # ===========================================================================
+  mongodb:
+    image: mongo:7
+    container_name: seo-mongodb
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - seo_network
+    environment:
+      - MONGO_INITDB_DATABASE=seo_articles
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ===========================================================================
+  # CACHE & QUEUE - Redis
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: seo-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - seo_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ===========================================================================
+  # BACKEND API - Express + Socket.IO
+  # ===========================================================================
+  backend-api:
+    image: ${DOCKERHUB_USERNAME}/seo-articles-api:latest
+    container_name: seo-api
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - MONGODB_URI=mongodb://seo-mongodb:27017/seo_articles
+      - REDIS_HOST=seo-redis
+      - REDIS_PORT=6379
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=14d
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TRUST_PROXY=true
+    networks:
+      - seo_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # ===========================================================================
+  # BACKEND WORKERS - Article Generation Processing
+  # ===========================================================================
+  backend-worker:
+    image: ${DOCKERHUB_USERNAME}/seo-articles-worker:latest
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-api:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://seo-mongodb:27017/seo_articles
+      - REDIS_HOST=seo-redis
+      - REDIS_PORT=6379
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
+    networks:
+      - seo_network
+    deploy:
+      replicas: ${WORKER_REPLICAS:-3}
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+  # ===========================================================================
+  # FRONTEND - Next.js Application
+  # ===========================================================================
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/seo-articles-frontend:latest
+    container_name: seo-frontend
+    restart: unless-stopped
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+    networks:
+      - seo_network
+
+  # ===========================================================================
+  # MONITORING - Prometheus (Metrics Collection)
+  # ===========================================================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: seo-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - seo_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================================================
+  # MONITORING - Loki (Log Aggregation)
+  # ===========================================================================
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: seo-loki
+    restart: unless-stopped
+    user: "0"
+    volumes:
+      - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - seo_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ===========================================================================
+  # MONITORING - Promtail (Log Collection Agent)
+  # ===========================================================================
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: seo-promtail
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - seo_network
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  # ===========================================================================
+  # MONITORING - Grafana (Dashboards & Visualization)
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: seo-grafana
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN}
+      - GF_INSTALL_PLUGINS=grafana-clock-panel
+    networks:
+      - seo_network
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+
+  # ===========================================================================
+  # MONITORING - cAdvisor (Container Metrics)
+  # ===========================================================================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: seo-cadvisor
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    devices:
+      - /dev/kmsg
+    networks:
+      - seo_network
+
+  # ===========================================================================
+  # MONITORING - Redis Exporter
+  # ===========================================================================
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.55.0
+    container_name: seo-redis-exporter
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=seo-redis:6379
+    networks:
+      - seo_network
+    depends_on:
+      redis:
+        condition: service_healthy
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  seo_network:
+    driver: bridge
+    name: seo_network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  npm_data:
+    name: seo_npm_data
+  npm_letsencrypt:
+    name: seo_npm_letsencrypt
+  mongodb_data:
+    name: seo_mongodb_data
+  redis_data:
+    name: seo_redis_data
+  prometheus_data:
+    name: seo_prometheus_data
+  loki_data:
+    name: seo_loki_data
+  grafana_data:
+    name: seo_grafana_data

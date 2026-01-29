@@ -1,0 +1,23 @@
+# Grafana Datasources Configuration
+
+apiVersion: 1
+
+datasources:
+  # Prometheus for metrics
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://seo-prometheus:9090
+    isDefault: true
+    editable: false
+
+  # Loki for logs
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://seo-loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000

@@ -1,0 +1,5 @@
+# Environment file with secrets
+.env
+
+# Grafana data (if somehow present locally)
+*.db
