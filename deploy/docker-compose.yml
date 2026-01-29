@@ -1,13 +1,11 @@
-version: '3.8'
-
 # =============================================================================
-# SEO Articles Production Stack
+# SEO Articles Production Stack (with external nginx)
 # =============================================================================
 #
 # Prerequisites:
 # 1. Docker & Docker Compose installed
 # 2. .env file configured (run ./setup.sh first)
-# 3. Domains pointing to this server
+# 3. External nginx configured to proxy to ports 3200, 3201, 3202
 #
 # Usage:
 #   ./setup.sh        # First time setup
@@ -17,31 +15,6 @@ version: '3.8'
 # =============================================================================
 
 services:
-  # ===========================================================================
-  # NGINX PROXY MANAGER - Reverse Proxy with SSL
-  # ===========================================================================
-  # Only service with external ports (80, 443, 81)
-  # Admin UI: http://SERVER_IP:81 (Default: admin@example.com / changeme)
-  nginx-proxy-manager:
-    image: 'jc21/nginx-proxy-manager:latest'
-    container_name: seo-npm
-    restart: unless-stopped
-    ports:
-      - '80:80'      # HTTP
-      - '443:443'    # HTTPS
-      - '81:81'      # NPM Admin UI (remove after setup for security)
-    volumes:
-      - npm_data:/data
-      - npm_letsencrypt:/etc/letsencrypt
-    networks:
-      - seo_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:81/api/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
   # ===========================================================================
   # DATABASE - MongoDB
   # ===========================================================================
@@ -88,6 +61,8 @@ services:
     image: ${DOCKERHUB_USERNAME}/seo-articles-api:latest
     container_name: seo-api
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3201:3001"
     depends_on:
       mongodb:
         condition: service_healthy
@@ -148,6 +123,8 @@ services:
     image: ${DOCKERHUB_USERNAME}/seo-articles-frontend:latest
     container_name: seo-frontend
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3200:3000"
     depends_on:
       backend-api:
         condition: service_healthy
@@ -225,6 +202,8 @@ services:
     image: grafana/grafana:10.2.2
     container_name: seo-grafana
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:3202:3000"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -289,10 +268,6 @@ networks:
 # VOLUMES
 # =============================================================================
 volumes:
-  npm_data:
-    name: seo_npm_data
-  npm_letsencrypt:
-    name: seo_npm_letsencrypt
   mongodb_data:
     name: seo_mongodb_data
   redis_data:
