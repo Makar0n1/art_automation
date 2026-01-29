@@ -77,7 +77,7 @@ export interface MaskedApiKeys {
     isValid: boolean;
     lastChecked?: string;
     url?: string; // URL is not masked
-    maskedSecretKey?: string;
+    maskedKey?: string; // Service Role Key masked
   };
   firecrawl: {
     isConfigured: boolean;

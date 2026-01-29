@@ -192,118 +192,122 @@ export default function AccountPage() {
         </CardContent>
       </Card>
 
-      {/* Change Password */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
-              <Lock className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-            </div>
-            <div>
-              <CardTitle>Change Password</CardTitle>
-              <CardDescription>Update your account password</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={passwordForm.handleSubmit(handlePasswordChange)} className="space-y-4">
-            <div className="relative">
-              <Input
-                label="Current Password"
-                type={showPasswords.current ? 'text' : 'password'}
-                placeholder="Enter current password"
-                {...passwordForm.register('currentPassword', { required: true })}
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
-                onClick={() => setShowPasswords((s) => ({ ...s, current: !s.current }))}
-              >
-                {showPasswords.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-
-            <div className="relative">
-              <Input
-                label="New Password"
-                type={showPasswords.new ? 'text' : 'password'}
-                placeholder="Enter new password (min 6 characters)"
-                {...passwordForm.register('newPassword', { required: true, minLength: 6 })}
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
-                onClick={() => setShowPasswords((s) => ({ ...s, new: !s.new }))}
-              >
-                {showPasswords.new ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-
-            <div className="relative">
-              <Input
-                label="Confirm New Password"
-                type={showPasswords.confirm ? 'text' : 'password'}
-                placeholder="Confirm new password"
-                {...passwordForm.register('confirmPassword', { required: true })}
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
-                onClick={() => setShowPasswords((s) => ({ ...s, confirm: !s.confirm }))}
-              >
-                {showPasswords.confirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
-            </div>
-          </form>
-        </CardContent>
-        <CardFooter>
-          <Button
-            onClick={passwordForm.handleSubmit(handlePasswordChange)}
-            disabled={passwordForm.formState.isSubmitting}
-            leftIcon={
-              passwordForm.formState.isSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Lock className="h-4 w-4" />
-              )
-            }
-          >
-            Change Password
-          </Button>
-        </CardFooter>
-      </Card>
-
-      {/* PIN Management */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
+      {/* Password & PIN Row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Change Password */}
+        <Card className="flex flex-col">
+          <CardHeader>
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
-                <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                <Lock className="h-5 w-5 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <CardTitle>Security PIN</CardTitle>
-                <CardDescription>
-                  {hasPinConfigured
-                    ? 'Your PIN protects API key changes'
-                    : 'Set up a PIN to protect API key changes'}
-                </CardDescription>
+                <CardTitle>Change Password</CardTitle>
+                <CardDescription>Update your account password</CardDescription>
               </div>
             </div>
-            {hasPinConfigured ? (
-              <Badge variant="success">
-                <Check className="mr-1 h-3 w-3" />
-                Configured
-              </Badge>
-            ) : (
-              <Badge variant="warning">
-                <AlertTriangle className="mr-1 h-3 w-3" />
-                Not Set
-              </Badge>
-            )}
+          </CardHeader>
+          <CardContent className="flex-1">
+            <form onSubmit={passwordForm.handleSubmit(handlePasswordChange)} className="space-y-4">
+              <div className="relative">
+                <Input
+                  label="Current Password"
+                  type={showPasswords.current ? 'text' : 'password'}
+                  placeholder="Enter current password"
+                  {...passwordForm.register('currentPassword', { required: true })}
+                  className="pr-12"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
+                  onClick={() => setShowPasswords((s) => ({ ...s, current: !s.current }))}
+                >
+                  {showPasswords.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+
+              <div className="relative">
+                <Input
+                  label="New Password"
+                  type={showPasswords.new ? 'text' : 'password'}
+                  placeholder="Enter new password (min 6 characters)"
+                  {...passwordForm.register('newPassword', { required: true, minLength: 6 })}
+                  className="pr-12"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
+                  onClick={() => setShowPasswords((s) => ({ ...s, new: !s.new }))}
+                >
+                  {showPasswords.new ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+
+              <div className="relative">
+                <Input
+                  label="Confirm New Password"
+                  type={showPasswords.confirm ? 'text' : 'password'}
+                  placeholder="Confirm new password"
+                  {...passwordForm.register('confirmPassword', { required: true })}
+                  className="pr-12"
+                />
+                <button
+                  type="button"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
+                  onClick={() => setShowPasswords((s) => ({ ...s, confirm: !s.confirm }))}
+                >
+                  {showPasswords.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                </button>
+              </div>
+            </form>
+          </CardContent>
+          <CardFooter className="justify-end">
+            <Button
+              className="min-w-[160px]"
+              onClick={passwordForm.handleSubmit(handlePasswordChange)}
+              disabled={passwordForm.formState.isSubmitting}
+              leftIcon={
+                passwordForm.formState.isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Lock className="h-4 w-4" />
+                )
+              }
+            >
+              Change Password
+            </Button>
+          </CardFooter>
+        </Card>
+
+        {/* PIN Management */}
+        <Card className="flex flex-col">
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+              <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <CardTitle>Security PIN</CardTitle>
+              <CardDescription>
+                {hasPinConfigured
+                  ? 'Your PIN protects API key changes'
+                  : 'Set up a PIN to protect API key changes'}
+              </CardDescription>
+            </div>
           </div>
+          {hasPinConfigured ? (
+            <Badge variant="success">
+              <Check className="mr-1 h-3 w-3" />
+              Configured
+            </Badge>
+          ) : (
+            <Badge variant="warning">
+              <AlertTriangle className="mr-1 h-3 w-3" />
+              Not Set
+            </Badge>
+          )}
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex-1">
           {!hasPinConfigured && (
             <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
               <div className="flex items-start gap-3">
@@ -328,13 +332,14 @@ export default function AccountPage() {
                   type={showPins.current ? 'text' : 'password'}
                   placeholder="Enter current PIN"
                   {...pinForm.register('currentPin', { required: hasPinConfigured })}
+                  className="pr-12"
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                   onClick={() => setShowPins((s) => ({ ...s, current: !s.current }))}
                 >
-                  {showPins.current ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showPins.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
             ) : (
@@ -344,13 +349,14 @@ export default function AccountPage() {
                   type={showPins.password ? 'text' : 'password'}
                   placeholder="Enter your account password to set up PIN"
                   {...pinForm.register('password', { required: !hasPinConfigured })}
+                  className="pr-12"
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                   onClick={() => setShowPins((s) => ({ ...s, password: !s.password }))}
                 >
-                  {showPins.password ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showPins.password ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
             )}
@@ -364,13 +370,14 @@ export default function AccountPage() {
                   required: true,
                   minLength: 4,
                 })}
+                className="pr-12"
               />
               <button
                 type="button"
-                className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                 onClick={() => setShowPins((s) => ({ ...s, new: !s.new }))}
               >
-                {showPins.new ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPins.new ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
 
@@ -380,23 +387,25 @@ export default function AccountPage() {
                 type={showPins.confirm ? 'text' : 'password'}
                 placeholder="Confirm PIN"
                 {...pinForm.register('confirmPin', { required: true })}
+                className="pr-12"
               />
               <button
                 type="button"
-                className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                 onClick={() => setShowPins((s) => ({ ...s, confirm: !s.confirm }))}
               >
-                {showPins.confirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showPins.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
               </button>
             </div>
 
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              PIN must be at least 4 characters (letters, numbers, symbols allowed). This PIN will be required when changing API keys.
-            </p>
           </form>
         </CardContent>
-        <CardFooter>
+        <CardFooter className="justify-between items-center">
+          <p className="text-sm text-gray-500 dark:text-gray-400 flex-1 mr-4">
+            PIN must be at least 4 characters (letters, numbers, symbols allowed). This PIN will be required when changing API keys.
+          </p>
           <Button
+            className="min-w-[160px]"
             onClick={pinForm.handleSubmit(handlePinChange)}
             disabled={pinForm.formState.isSubmitting}
             leftIcon={
@@ -411,6 +420,7 @@ export default function AccountPage() {
           </Button>
         </CardFooter>
       </Card>
+      </div>
 
       {/* Security Info */}
       <Card className="bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800">

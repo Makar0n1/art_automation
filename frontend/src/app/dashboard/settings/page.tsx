@@ -30,7 +30,6 @@ import {
   CardTitle,
   CardDescription,
   CardContent,
-  CardFooter,
   Button,
   Input,
   Badge,
@@ -267,25 +266,26 @@ export default function SettingsPage() {
   };
 
   const StatusBadge = ({ isConfigured, isValid, lastChecked }: { isConfigured: boolean; isValid: boolean; lastChecked?: string | null }) => {
+    const badgeClass = "text-base px-4 py-2 rounded-full min-w-[100px] justify-center";
     if (!isConfigured) {
-      return <Badge variant="default">Not Configured</Badge>;
+      return <Badge variant="default" className={badgeClass}>Not Configured</Badge>;
     }
     // Key is configured but never tested
     if (!lastChecked) {
-      return <Badge variant="default">Not Tested</Badge>;
+      return <Badge variant="default" className={badgeClass}>Not Tested</Badge>;
     }
     // Key was tested
     if (isValid) {
       return (
-        <Badge variant="success">
-          <Check className="mr-1 h-3 w-3" />
+        <Badge variant="success" className={badgeClass}>
+          <Check className="mr-1.5 h-5 w-5" />
           Valid
         </Badge>
       );
     }
     return (
-      <Badge variant="error">
-        <X className="mr-1 h-3 w-3" />
+      <Badge variant="error" className={badgeClass}>
+        <X className="mr-1.5 h-5 w-5" />
         Not Valid
       </Badge>
     );
@@ -361,22 +361,19 @@ export default function SettingsPage() {
           </div>
         </div>
       </Modal>
-
       {/* OpenRouter */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                <Bot className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div>
-                <CardTitle>OpenRouter</CardTitle>
-                <CardDescription>AI model provider for article generation</CardDescription>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-100 dark:bg-purple-900/30">
+              <Bot className="h-6 w-6 text-purple-600 dark:text-purple-400" />
             </div>
-            {maskedKeys && <StatusBadge isConfigured={maskedKeys.openRouter.isConfigured} isValid={maskedKeys.openRouter.isValid} lastChecked={maskedKeys.openRouter.lastChecked} />}
+            <div>
+              <CardTitle className="text-xl">OpenRouter</CardTitle>
+              <CardDescription>AI model provider</CardDescription>
+            </div>
           </div>
+          {maskedKeys && <StatusBadge isConfigured={maskedKeys.openRouter.isConfigured} isValid={maskedKeys.openRouter.isValid} lastChecked={maskedKeys.openRouter.lastChecked} />}
         </CardHeader>
         <CardContent>
           {editMode === 'openRouter' ? (
@@ -388,89 +385,85 @@ export default function SettingsPage() {
                   placeholder="sk-or-v1-..."
                   {...openRouterForm.register('apiKey')}
                   autoFocus
+                  className="pr-12"
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                   onClick={() => setShowKeys((s) => ({ ...s, openRouter: !s.openRouter }))}
                 >
-                  {showKeys.openRouter ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showKeys.openRouter ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={openRouterForm.handleSubmit(saveOpenRouter)}
+                  disabled={openRouterForm.formState.isSubmitting}
+                >
+                  Save Key
+                </Button>
               </div>
             </form>
           ) : (
-            <div className="space-y-3">
-              {maskedKeys?.openRouter.isConfigured ? (
-                <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="flex justify-between items-end">
+              <div className="space-y-2">
+                <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">API Key</p>
-                  <p className="font-mono text-gray-900 dark:text-white">{maskedKeys.openRouter.maskedKey}</p>
+                  <p className="font-mono text-lg text-gray-900 dark:text-white">
+                    {maskedKeys?.openRouter.isConfigured ? maskedKeys.openRouter.maskedKey : '—'}
+                  </p>
                 </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400">No API key configured</p>
-              )}
-              {maskedKeys?.openRouter.lastChecked && (
-                <p className="text-sm text-gray-500">
-                  Last tested: {formatDate(maskedKeys.openRouter.lastChecked)}
-                </p>
-              )}
+                {maskedKeys?.openRouter.lastChecked && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Last tested: {formatDate(maskedKeys.openRouter.lastChecked)}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col gap-2 ml-4">
+                <Button
+                  className="w-full"
+                  onClick={() => handleEditClick('openRouter')}
+                  leftIcon={<Edit3 className="h-4 w-4" />}
+                >
+                  {maskedKeys?.openRouter.isConfigured ? 'Change' : 'Add'}
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={testOpenRouter}
+                  disabled={!maskedKeys?.openRouter.isConfigured || testingKey === 'openRouter'}
+                  leftIcon={
+                    testingKey === 'openRouter' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )
+                  }
+                >
+                  Test
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
-        <CardFooter>
-          {editMode === 'openRouter' ? (
-            <>
-              <Button variant="secondary" onClick={handleCancelEdit}>
-                Cancel
-              </Button>
-              <Button
-                onClick={openRouterForm.handleSubmit(saveOpenRouter)}
-                disabled={openRouterForm.formState.isSubmitting}
-              >
-                Save Key
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="secondary"
-                onClick={testOpenRouter}
-                disabled={!maskedKeys?.openRouter.isConfigured || testingKey === 'openRouter'}
-                leftIcon={
-                  testingKey === 'openRouter' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )
-                }
-              >
-                Test Connection
-              </Button>
-              <Button
-                onClick={() => handleEditClick('openRouter')}
-                leftIcon={<Edit3 className="h-4 w-4" />}
-              >
-                {maskedKeys?.openRouter.isConfigured ? 'Change Key' : 'Add Key'}
-              </Button>
-            </>
-          )}
-        </CardFooter>
       </Card>
 
       {/* Supabase */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100 dark:bg-green-900/30">
-                <Database className="h-5 w-5 text-green-600 dark:text-green-400" />
-              </div>
-              <div>
-                <CardTitle>Supabase</CardTitle>
-                <CardDescription>Database and storage backend</CardDescription>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-green-100 dark:bg-green-900/30">
+              <Database className="h-6 w-6 text-green-600 dark:text-green-400" />
             </div>
-            {maskedKeys && <StatusBadge isConfigured={maskedKeys.supabase.isConfigured} isValid={maskedKeys.supabase.isValid} lastChecked={maskedKeys.supabase.lastChecked} />}
+            <div>
+              <CardTitle className="text-xl">Supabase</CardTitle>
+              <CardDescription>Vector database</CardDescription>
+            </div>
           </div>
+          {maskedKeys && <StatusBadge isConfigured={maskedKeys.supabase.isConfigured} isValid={maskedKeys.supabase.isValid} lastChecked={maskedKeys.supabase.lastChecked} />}
         </CardHeader>
         <CardContent>
           {editMode === 'supabase' ? (
@@ -488,95 +481,93 @@ export default function SettingsPage() {
                   type={showKeys.supabase ? 'text' : 'password'}
                   placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                   {...supabaseForm.register('secretKey')}
+                  className="pr-12"
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                   onClick={() => setShowKeys((s) => ({ ...s, supabase: !s.supabase }))}
                 >
-                  {showKeys.supabase ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showKeys.supabase ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={supabaseForm.handleSubmit(saveSupabase)}
+                  disabled={supabaseForm.formState.isSubmitting}
+                >
+                  Save
+                </Button>
               </div>
             </form>
           ) : (
-            <div className="space-y-3">
-              {maskedKeys?.supabase.isConfigured ? (
-                <>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Project URL</p>
-                    <p className="font-mono text-gray-900 dark:text-white text-sm break-all">{maskedKeys.supabase.url}</p>
-                  </div>
-                  <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="flex justify-between items-end">
+              <div className="space-y-2 flex-1 min-w-0 mr-4">
+                <div className="flex gap-8">
+                  <div className="min-w-0">
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Service Role Key</p>
-                    <p className="font-mono text-gray-900 dark:text-white">{maskedKeys.supabase.maskedSecretKey}</p>
+                    <p className="font-mono text-lg text-gray-900 dark:text-white">
+                      {maskedKeys?.supabase.isConfigured ? maskedKeys.supabase.maskedKey : '—'}
+                    </p>
                   </div>
-                </>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400">No credentials configured</p>
-              )}
-              {maskedKeys?.supabase.lastChecked && (
-                <p className="text-sm text-gray-500">
-                  Last tested: {formatDate(maskedKeys.supabase.lastChecked)}
-                </p>
-              )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Project URL</p>
+                    <p className="font-mono text-lg text-gray-900 dark:text-white truncate">
+                      {maskedKeys?.supabase.isConfigured ? maskedKeys.supabase.url : '—'}
+                    </p>
+                  </div>
+                </div>
+                {maskedKeys?.supabase.lastChecked && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Last tested: {formatDate(maskedKeys.supabase.lastChecked)}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col gap-2">
+                <Button
+                  className="w-full"
+                  onClick={() => handleEditClick('supabase')}
+                  leftIcon={<Edit3 className="h-4 w-4" />}
+                >
+                  {maskedKeys?.supabase.isConfigured ? 'Change' : 'Add'}
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={testSupabase}
+                  disabled={!maskedKeys?.supabase.isConfigured || testingKey === 'supabase'}
+                  leftIcon={
+                    testingKey === 'supabase' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )
+                  }
+                >
+                  Test
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
-        <CardFooter>
-          {editMode === 'supabase' ? (
-            <>
-              <Button variant="secondary" onClick={handleCancelEdit}>
-                Cancel
-              </Button>
-              <Button
-                onClick={supabaseForm.handleSubmit(saveSupabase)}
-                disabled={supabaseForm.formState.isSubmitting}
-              >
-                Save Credentials
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="secondary"
-                onClick={testSupabase}
-                disabled={!maskedKeys?.supabase.isConfigured || testingKey === 'supabase'}
-                leftIcon={
-                  testingKey === 'supabase' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )
-                }
-              >
-                Test Connection
-              </Button>
-              <Button
-                onClick={() => handleEditClick('supabase')}
-                leftIcon={<Edit3 className="h-4 w-4" />}
-              >
-                {maskedKeys?.supabase.isConfigured ? 'Change Credentials' : 'Add Credentials'}
-              </Button>
-            </>
-          )}
-        </CardFooter>
       </Card>
 
       {/* Firecrawl */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
-                <Flame className="h-5 w-5 text-orange-600 dark:text-orange-400" />
-              </div>
-              <div>
-                <CardTitle>Firecrawl</CardTitle>
-                <CardDescription>SERP scraping and content extraction</CardDescription>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-orange-100 dark:bg-orange-900/30">
+              <Flame className="h-6 w-6 text-orange-600 dark:text-orange-400" />
             </div>
-            {maskedKeys && <StatusBadge isConfigured={maskedKeys.firecrawl.isConfigured} isValid={maskedKeys.firecrawl.isValid} lastChecked={maskedKeys.firecrawl.lastChecked} />}
+            <div>
+              <CardTitle className="text-xl">Firecrawl</CardTitle>
+              <CardDescription>SERP scraping</CardDescription>
+            </div>
           </div>
+          {maskedKeys && <StatusBadge isConfigured={maskedKeys.firecrawl.isConfigured} isValid={maskedKeys.firecrawl.isValid} lastChecked={maskedKeys.firecrawl.lastChecked} />}
         </CardHeader>
         <CardContent>
           {editMode === 'firecrawl' ? (
@@ -588,72 +579,70 @@ export default function SettingsPage() {
                   placeholder="fc-..."
                   {...firecrawlForm.register('apiKey')}
                   autoFocus
+                  className="pr-12"
                 />
                 <button
                   type="button"
-                  className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
+                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
                   onClick={() => setShowKeys((s) => ({ ...s, firecrawl: !s.firecrawl }))}
                 >
-                  {showKeys.firecrawl ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  {showKeys.firecrawl ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button variant="secondary" onClick={handleCancelEdit}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={firecrawlForm.handleSubmit(saveFirecrawl)}
+                  disabled={firecrawlForm.formState.isSubmitting}
+                >
+                  Save Key
+                </Button>
               </div>
             </form>
           ) : (
-            <div className="space-y-3">
-              {maskedKeys?.firecrawl.isConfigured ? (
-                <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
+            <div className="flex justify-between items-end">
+              <div className="space-y-2">
+                <div>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">API Key</p>
-                  <p className="font-mono text-gray-900 dark:text-white">{maskedKeys.firecrawl.maskedKey}</p>
+                  <p className="font-mono text-lg text-gray-900 dark:text-white">
+                    {maskedKeys?.firecrawl.isConfigured ? maskedKeys.firecrawl.maskedKey : '—'}
+                  </p>
                 </div>
-              ) : (
-                <p className="text-gray-500 dark:text-gray-400">No API key configured</p>
-              )}
-              {maskedKeys?.firecrawl.lastChecked && (
-                <p className="text-sm text-gray-500">
-                  Last tested: {formatDate(maskedKeys.firecrawl.lastChecked)}
-                </p>
-              )}
+                {maskedKeys?.firecrawl.lastChecked && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Last tested: {formatDate(maskedKeys.firecrawl.lastChecked)}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col gap-2 ml-4">
+                <Button
+                  className="w-full"
+                  onClick={() => handleEditClick('firecrawl')}
+                  leftIcon={<Edit3 className="h-4 w-4" />}
+                >
+                  {maskedKeys?.firecrawl.isConfigured ? 'Change' : 'Add'}
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="secondary"
+                  onClick={testFirecrawl}
+                  disabled={!maskedKeys?.firecrawl.isConfigured || testingKey === 'firecrawl'}
+                  leftIcon={
+                    testingKey === 'firecrawl' ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )
+                  }
+                >
+                  Test
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
-        <CardFooter>
-          {editMode === 'firecrawl' ? (
-            <>
-              <Button variant="secondary" onClick={handleCancelEdit}>
-                Cancel
-              </Button>
-              <Button
-                onClick={firecrawlForm.handleSubmit(saveFirecrawl)}
-                disabled={firecrawlForm.formState.isSubmitting}
-              >
-                Save Key
-              </Button>
-            </>
-          ) : (
-            <>
-              <Button
-                variant="secondary"
-                onClick={testFirecrawl}
-                disabled={!maskedKeys?.firecrawl.isConfigured || testingKey === 'firecrawl'}
-                leftIcon={
-                  testingKey === 'firecrawl' ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )
-                }
-              >
-                Test Connection
-              </Button>
-              <Button
-                onClick={() => handleEditClick('firecrawl')}
-                leftIcon={<Edit3 className="h-4 w-4" />}
-              >
-                {maskedKeys?.firecrawl.isConfigured ? 'Change Key' : 'Add Key'}
-              </Button>
-            </>
-          )}
-        </CardFooter>
       </Card>
 
       {/* Info */}
