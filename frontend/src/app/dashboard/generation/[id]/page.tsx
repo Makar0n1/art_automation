@@ -229,10 +229,15 @@ export default function GenerationPage() {
       const response = await generationsApi.restart(generationId);
       if (response.success) {
         toast.success('Generation restarted from beginning');
-        // Update local state to show it's queued again
-        setGeneration((prev) =>
-          prev ? { ...prev, status: GenerationStatus.QUEUED, progress: 0 } : null
-        );
+
+        // Clear logs and reload generation from server
+        setLogs([]);
+
+        // Fetch fresh generation data to trigger Socket.IO resubscription
+        const freshResponse = await generationsApi.getOne(generationId);
+        if (freshResponse.success) {
+          setGeneration(freshResponse.data as Generation);
+        }
       }
     } catch (error) {
       toast.error('Failed to restart generation');

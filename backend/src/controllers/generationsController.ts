@@ -464,13 +464,14 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
         seoTitle: null,
         seoDescription: null,
         error: null,
-      },
-      $push: {
-        logs: {
-          timestamp: new Date(),
-          level: 'info',
-          message: `🔄 Restarting generation from scratch (previous status: ${previousStatus})...`,
-        },
+        // Clear old logs and start with restart message
+        logs: [
+          {
+            timestamp: new Date(),
+            level: 'info',
+            message: `🔄 Restarting generation from scratch (previous status: ${previousStatus})...`,
+          },
+        ],
       },
     });
 

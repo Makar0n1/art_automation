@@ -256,6 +256,17 @@ Target language: ${langName}
 Average competitor word count: ${averageWordCount}
 Article type: ${articleType}${comment ? `\n\nAUTHOR'S INSTRUCTIONS:\n${comment}` : ''}
 
+CRITICAL H1 ANALYSIS TASK:
+1. Examine ALL competitor H1 titles from above
+2. Identify what makes them strong or weak
+3. Create a COMPETITIVE H1 that:
+   - Is MORE specific, compelling, or comprehensive than competitors
+   - Includes main keyword "${mainKeyword}" naturally
+   - Is 50-70 characters for SEO
+   - Stands out and makes users want to click
+   - Example patterns: "Ultimate Guide", "Complete Tutorial", "Expert Tips", specific numbers, unique angles
+
+TARGET: Create a focused 1500-2000 word article (6-9 content blocks, NO bloat or filler).
 Create a comprehensive analysis and generate a unique, optimized article structure.
 
 Return ONLY valid JSON in this exact format:
@@ -299,13 +310,21 @@ Return ONLY valid JSON in this exact format:
 
 IMPORTANT RULES:
 1. All headings and instructions MUST be in ${langName}
-2. Block id=0 is always H1 (no questions)
+2. Block id=0 is H1 - Analyze competitor H1 titles and create a COMPETITIVE, UNIQUE title that:
+   - Is better than competitors (more specific, compelling, or comprehensive)
+   - Includes main keyword naturally
+   - Is 50-70 characters for optimal SEO
+   - NO questions in H1 block
 3. Block id=1 is always Introduction - heading MUST be EMPTY STRING "" (no "Einleitung"/"Introduction" heading!)
 4. Second-to-last block must be Conclusion (no questions)
 5. Last block must be FAQ (no questions), MAX 4-5 Q&A pairs, short and concise
 6. Content blocks (h2, h3) should have "questions" array with 0-5 SIMPLE research questions
-7. Include 10-15 content blocks total for comprehensive coverage
+7. CRITICAL: Include 6-9 content blocks total (NOT 10-15) for focused, high-quality coverage
+   - Quality over quantity
+   - Each block covers essential subtopics only
+   - Avoid redundant or filler sections
 8. Each block should have 3-8 LSI keywords relevant to that section
+9. TARGET ARTICLE LENGTH: 1500-2000 words total (compact, focused, no bloat)
 
 CRITICAL - Question Generation Rules:
 - Questions MUST be SHORT and SIMPLE (max 10 words)
@@ -549,44 +568,47 @@ Do not add any content, just the title.`;
 - Introduce the topic and its importance
 - Preview what the article will cover
 - Include the main keyword naturally
-- 150-250 words`;
-        estimatedWords = 200;
+- 100-150 words (concise and focused)`;
+        estimatedWords = 125;
         break;
 
       case 'h2':
       case 'h3':
-        const wordsPerBlock = Math.round((targetWordCount - 400) / 12); // Rough estimate
-        estimatedWords = Math.max(200, Math.min(400, wordsPerBlock));
-        blockTypeInstructions = `Write comprehensive content for this section.
+        // For 1500-2000 word articles with 6-9 content blocks
+        // Calculation: (1800 target - 400 for intro/conclusion/faq) / 7 blocks = ~200 words
+        const wordsPerBlock = Math.round((targetWordCount - 400) / 7);
+        estimatedWords = Math.max(150, Math.min(250, wordsPerBlock));
+        blockTypeInstructions = `Write focused, high-quality content for this section.
 - Start directly with the content (heading is already defined)
 - Use paragraphs, bullet lists, or numbered lists as appropriate
 - Include tables if data comparison is relevant
-- ${estimatedWords}-${estimatedWords + 100} words approximately
+- ${estimatedWords}-${estimatedWords + 50} words (concise, NO filler)
 - Use the LSI keywords naturally throughout
+- Every sentence must add value - no padding or repetition
 ${hasFactsFromResearch ? '- MUST include the verified facts provided above' : '- Write informatively but avoid specific statistics, research citations, or precise numbers you cannot verify'}`;
         break;
 
       case 'conclusion':
-        blockTypeInstructions = `Write a strong conclusion.
+        blockTypeInstructions = `Write a strong, concise conclusion.
 - Summarize the key points covered
 - Reinforce the main message
 - End with a call to action or final thought
-- 100-200 words`;
-        estimatedWords = 150;
+- 80-120 words (brief and impactful)`;
+        estimatedWords = 100;
         break;
 
       case 'faq':
-        blockTypeInstructions = `Generate EXACTLY 4-5 FAQ items. NO MORE than 5!
+        blockTypeInstructions = `Generate EXACTLY 4 FAQ items. NO MORE than 4!
 Format each as:
 **Q: [Short practical question]**
 A: [Concise answer - 1-2 sentences MAX]
 
 RULES:
 - Questions must be SHORT and practical (not academic)
-- Answers must be CONCISE (1-2 sentences, ~30-50 words each)
+- Answers must be CONCISE (1-2 sentences, ~25-40 words each)
 - Focus on real user concerns and pain points
-- Total FAQ section: ~200 words max`;
-        estimatedWords = 200;
+- Total FAQ section: 120-180 words max`;
+        estimatedWords = 150;
         break;
     }
 
