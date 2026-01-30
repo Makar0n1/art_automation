@@ -200,11 +200,14 @@ const updateProgress = async (
 };
 
 /**
- * Process generation job
+ * Start queue processor (CALL THIS ONLY IN WORKER.TS!)
  * Main worker function that handles article generation pipeline
  */
-generationQueue.process(config.queue.maxConcurrentGenerations, async (job) => {
-  const { generationId, userId, continueFrom } = job.data;
+export const startQueueProcessor = () => {
+  logger.info('🔧 Registering Bull queue processor...');
+
+  generationQueue.process(config.queue.maxConcurrentGenerations, async (job) => {
+    const { generationId, userId, continueFrom } = job.data;
 
   logger.info(`Processing generation ${generationId}`, { continueFrom });
 
@@ -1383,22 +1386,25 @@ generationQueue.process(config.queue.maxConcurrentGenerations, async (job) => {
 
     throw error;
   }
-});
+  });
 
-/**
- * Queue event handlers
- */
-generationQueue.on('completed', (job) => {
-  logger.info(`Job ${job.id} completed for generation ${job.data.generationId}`);
-});
+  /**
+   * Queue event handlers
+   */
+  generationQueue.on('completed', (job) => {
+    logger.info(`Job ${job.id} completed for generation ${job.data.generationId}`);
+  });
 
-generationQueue.on('failed', (job, err) => {
-  logger.error(`Job ${job?.id} failed`, { error: err.message, generationId: job?.data?.generationId });
-});
+  generationQueue.on('failed', (job, err) => {
+    logger.error(`Job ${job?.id} failed`, { error: err.message, generationId: job?.data?.generationId });
+  });
 
-generationQueue.on('stalled', (job) => {
-  logger.warn(`Job ${job.id} stalled`);
-});
+  generationQueue.on('stalled', (job) => {
+    logger.warn(`Job ${job.id} stalled`);
+  });
+
+  logger.info('✅ Bull queue processor registered successfully');
+};
 
 /**
  * Add generation to queue

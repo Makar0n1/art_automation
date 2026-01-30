@@ -10,7 +10,7 @@ import mongoose from 'mongoose';
 import { config } from './utils/config.js';
 import { logger } from './utils/logger.js';
 import { closeRedisConnections } from './utils/redis.js';
-import { generationQueue, setWorkerMode } from './queues/generationQueue.js';
+import { generationQueue, setWorkerMode, startQueueProcessor } from './queues/generationQueue.js';
 
 // Worker identification
 const workerId = `worker-${process.pid}-${Date.now().toString(36)}`;
@@ -31,6 +31,9 @@ async function startWorker(): Promise<void> {
 
     // Set worker mode for queue (uses Redis pub/sub instead of direct Socket.IO)
     setWorkerMode();
+
+    // Start queue processor (IMPORTANT: only workers should process jobs!)
+    startQueueProcessor();
 
     // Log queue status
     const stats = await generationQueue.getJobCounts();
