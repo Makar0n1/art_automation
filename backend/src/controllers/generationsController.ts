@@ -408,3 +408,91 @@ export const continueGenerationHandler = async (
     }
   }
 };
+
+/**
+ * Restart a failed or completed generation from scratch
+ * Clears all intermediate data and starts fresh
+ */
+export const restartGenerationHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      throw new AppError('User not found', 404);
+    }
+
+    // Verify generation exists and belongs to user
+    const generation = await Generation.findOne({ _id: id, userId });
+    if (!generation) {
+      throw new AppError('Generation not found', 404);
+    }
+
+    // Check if generation is in a restartable state (failed or completed)
+    const restartableStates = [
+      GenerationStatus.FAILED,
+      GenerationStatus.COMPLETED,
+      GenerationStatus.PAUSED_AFTER_SERP,
+      GenerationStatus.PAUSED_AFTER_STRUCTURE,
+      GenerationStatus.PAUSED_AFTER_BLOCKS,
+      GenerationStatus.PAUSED_AFTER_ANSWERS,
+      GenerationStatus.PAUSED_AFTER_WRITING,
+      GenerationStatus.PAUSED_AFTER_REVIEW,
+    ];
+
+    if (!restartableStates.includes(generation.status as GenerationStatus)) {
+      throw new AppError(
+        `Cannot restart: generation is in "${generation.status}" state`,
+        400
+      );
+    }
+
+    const previousStatus = generation.status;
+
+    // Clear all intermediate data and reset to initial state
+    await Generation.findByIdAndUpdate(id, {
+      $set: {
+        status: GenerationStatus.QUEUED,
+        progress: 0,
+        currentStep: 'queued',
+        serpResults: [],
+        structureAnalysis: null,
+        articleBlocks: [],
+        averageWordCount: null,
+        generatedArticle: null,
+        article: null,
+        seoTitle: null,
+        seoDescription: null,
+        error: null,
+      },
+      $push: {
+        logs: {
+          timestamp: new Date(),
+          level: 'info',
+          message: `🔄 Restarting generation from scratch (previous status: ${previousStatus})...`,
+        },
+      },
+    });
+
+    // Queue generation with original config
+    await queueGeneration(id, userId);
+
+    logger.info(`Generation restarted: ${id} (was: ${previousStatus})`);
+
+    res.json({
+      success: true,
+      message: 'Generation restarted from beginning',
+      data: {
+        id: generation._id,
+        previousStatus,
+      },
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Restart generation error', { error });
+      res.status(500).json({ success: false, error: 'Failed to restart generation' });
+    }
+  }
+};

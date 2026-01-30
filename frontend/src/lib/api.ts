@@ -226,6 +226,11 @@ export const generationsApi = {
     return response.data;
   },
 
+  restart: async (id: string) => {
+    const response = await api.post<ApiResponse>(`/generations/${id}/restart`);
+    return response.data;
+  },
+
   getQueueStats: async () => {
     const response = await api.get<ApiResponse>('/generations/queue/stats');
     return response.data;

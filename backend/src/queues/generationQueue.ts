@@ -243,6 +243,14 @@ export const startQueueProcessor = () => {
       throw new Error('User not found');
     }
 
+    // DEBUG: Log user API keys structure
+    logger.debug(`User API keys structure:`, {
+      hasApiKeys: !!user.apiKeys,
+      hasFirecrawl: !!user.apiKeys?.firecrawl,
+      hasFirecrawlKey: !!user.apiKeys?.firecrawl?.apiKey,
+      firecrawlKeyPreview: user.apiKeys?.firecrawl?.apiKey?.substring(0, 30),
+    });
+
     // Check if continuous mode is enabled (skip all pauses)
     const continuousMode = generation.config.continuousMode === true;
     if (continuousMode && !continueFrom) {
