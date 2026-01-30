@@ -63,9 +63,9 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/seo_articles
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=${JWT_SECRET:-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855}
-      - JWT_EXPIRES_IN=14d
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - MAX_CONCURRENT_GENERATIONS=5
 
   # ============================================
@@ -90,7 +90,9 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/seo_articles
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY}
     deploy:
       replicas: 3
       resources:
@@ -216,8 +218,8 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3002
       - GF_INSTALL_PLUGINS=grafana-clock-panel
@@ -237,16 +239,16 @@ volumes:
 # ============================================
 # FIRST TIME SETUP:
 #
-# 1. Create admin user (run from backend directory):
-#    cd backend && npm run setup:user
-#    This will prompt for email, password, and PIN.
+# 1. Configure environment variables in root .env file:
+#    cp .env.example .env
+#    # Edit .env and set JWT_SECRET, ENCRYPTION_KEY, etc.
 #
-# 2. Copy .env.example to .env and set JWT_SECRET:
-#    cp backend/.env.example backend/.env
-#    # Edit .env and set a strong JWT_SECRET
-#
-# 3. Start all services:
+# 2. Start all services:
 #    docker compose up -d --build
+#
+# 3. Create admin user:
+#    docker exec -it seo-articles-api npm run setup:user
+#    This will prompt for email, password, and PIN.
 #
 # ============================================
 # Usage:

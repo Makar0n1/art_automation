@@ -17,6 +17,7 @@ import {
   FileText,
   Loader2,
   Play,
+  RotateCcw,
   List,
   ChevronDown,
   ChevronUp,
@@ -70,6 +71,7 @@ export default function GenerationPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCopied, setIsCopied] = useState(false);
   const [isContinuing, setIsContinuing] = useState(false);
+  const [isRestarting, setIsRestarting] = useState(false);
   const [isTitleCopied, setIsTitleCopied] = useState(false);
   const [isDescCopied, setIsDescCopied] = useState(false);
   const [isLogsExpanded, setIsLogsExpanded] = useState(false);
@@ -219,6 +221,26 @@ export default function GenerationPage() {
     }
   };
 
+  const handleRestart = async () => {
+    if (!generation) return;
+
+    setIsRestarting(true);
+    try {
+      const response = await generationsApi.restart(generationId);
+      if (response.success) {
+        toast.success('Generation restarted from beginning');
+        // Update local state to show it's queued again
+        setGeneration((prev) =>
+          prev ? { ...prev, status: GenerationStatus.QUEUED, progress: 0 } : null
+        );
+      }
+    } catch (error) {
+      toast.error('Failed to restart generation');
+    } finally {
+      setIsRestarting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -304,6 +326,17 @@ export default function GenerationPage() {
               disabled={isContinuing}
             >
               {isContinuing ? 'Continuing...' : 'Continue'}
+            </Button>
+          )}
+          {(generation.status === GenerationStatus.FAILED || generation.status === GenerationStatus.COMPLETED) && (
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={isRestarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+              onClick={handleRestart}
+              disabled={isRestarting}
+            >
+              {isRestarting ? 'Restarting...' : 'Restart'}
             </Button>
           )}
         </div>
