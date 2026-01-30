@@ -5,7 +5,10 @@
 import { io, Socket } from 'socket.io-client';
 import { ArticleBlock, GenerationLog, GenerationStatus } from '@/types';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3001';
+// Derive Socket.IO URL from API URL (remove /api suffix)
+// Example: https://api.domain.com/api → https://api.domain.com
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+const SOCKET_URL = API_URL.replace(/\/api$/, '');
 
 let socket: Socket | null = null;
 

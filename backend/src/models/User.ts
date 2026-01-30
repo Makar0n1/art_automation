@@ -129,8 +129,8 @@ UserSchema.methods.comparePin = async function (
 };
 
 /**
- * Index for faster email lookups during authentication
+ * Note: Email index is automatically created by `unique: true` in schema
+ * No need to manually add index here (would cause duplicate index warning)
  */
-UserSchema.index({ email: 1 });
 
 export const User = mongoose.model<IUser>('User', UserSchema);
