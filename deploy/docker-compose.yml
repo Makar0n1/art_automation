@@ -75,7 +75,7 @@ services:
       - REDIS_HOST=seo-redis
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
-      - JWT_EXPIRES_IN=14d
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - TRUST_PROXY=true
     networks:
@@ -105,11 +105,13 @@ services:
       - MONGODB_URI=mongodb://seo-mongodb:27017/seo_articles
       - REDIS_HOST=seo-redis
       - REDIS_PORT=6379
-      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY:-2}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - WORKER_CONCURRENCY=${WORKER_CONCURRENCY}
     networks:
       - seo_network
     deploy:
-      replicas: ${WORKER_REPLICAS:-3}
+      replicas: ${WORKER_REPLICAS}
       resources:
         limits:
           memory: 512M
@@ -209,7 +211,7 @@ services:
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=https://${GRAFANA_DOMAIN}
