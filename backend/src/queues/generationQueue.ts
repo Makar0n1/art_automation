@@ -1558,6 +1558,19 @@ export const startQueueProcessor = () => {
  * Add generation to queue
  */
 export const queueGeneration = async (generationId: string, userId: string): Promise<Bull.Job<GenerationJobData>> => {
+  // Remove any existing job with this ID (from previous run / restart)
+  // Bull rejects duplicate jobIds silently, so we must clean up first
+  const existingJob = await generationQueue.getJob(generationId);
+  if (existingJob) {
+    try {
+      await existingJob.remove();
+      logger.info(`Removed existing job for generation ${generationId}`);
+    } catch (err) {
+      // Job might be active — can't remove, but that's fine for new queue attempt
+      logger.warn(`Could not remove existing job ${generationId}: ${(err as Error).message}`);
+    }
+  }
+
   const job = await generationQueue.add(
     { generationId, userId },
     { jobId: generationId }

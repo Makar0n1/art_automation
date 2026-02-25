@@ -106,7 +106,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            cd /opt/seo-articles/deploy
+            cd /opt/seo-articles
             echo "=== Pulling latest images ==="
             docker compose pull
 
