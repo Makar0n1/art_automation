@@ -639,12 +639,14 @@ Do not add any content, just the title.`;
           const reservedWords = Math.round(targetWordCount * 0.15);
           const targetContentBlocks = Math.max(5, Math.min(12, Math.ceil((targetWordCount - 400) / 220)));
           const wordsPerBlock = Math.round((targetWordCount - reservedWords) / targetContentBlocks);
-          estimatedWords = Math.max(150, Math.min(500, wordsPerBlock));
-          blockTypeInstructions = `Write ${estimatedWords}-${estimatedWords + 80} words for this section.
-- Write in PROSE PARAGRAPHS (2-4 paragraphs). A bullet list is allowed ONLY if you are enumerating concrete items (max 5 items). No "wall of lists".
+          estimatedWords = Math.max(150, Math.min(350, wordsPerBlock));
+          const hardCeiling = estimatedWords + 50;
+          blockTypeInstructions = `Write ${estimatedWords}-${hardCeiling} words for this section. HARD MAXIMUM: ${hardCeiling} words. Going over is WORSE than being too brief.
+- Write in PROSE PARAGRAPHS (2-3 paragraphs). A bullet list is allowed ONLY if you are enumerating concrete items (max 5 items). No "wall of lists".
 - Start directly with content (heading is already defined).
 - Every sentence adds NEW information — no restating what was said before in this article.
 - Use LSI keywords with proper grammatical adaptation.
+- DO NOT write exhaustive lists of criteria, tips, or numbered items. Pick the 3-5 MOST important points and explain them well in prose.
 ${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally into prose.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}`;
         }
         break;
@@ -899,16 +901,26 @@ Write the content now:`;
         } else {
           insertionInstruction = `Insert this link INLINE into the text.
 
-STEP 1: Understand the anchor phrase "${link.anchor}" — what does it mean? What part of speech is it? (noun phrase, verb phrase, compound noun, etc.)
-STEP 2: Build a grammatically correct ${langName} sentence where "${link.anchor}" fits naturally with proper case/declension/articles.
-STEP 3: Replace the anchor words in that sentence with the markdown link ${linkMarkdown}.
+The anchor phrase is: "${link.anchor}"
+
+YOUR TASK: Rewrite ONE existing sentence so the link fits grammatically. The anchor text INSIDE the brackets [${link.anchor}] must stay EXACTLY as-is, but you MUST add proper grammar OUTSIDE the brackets.
+
+EXAMPLES of CORRECT insertion in German:
+- Anchor "Ghostwriter Bachelorarbeit" → "...eine professionelle [Ghostwriter Bachelorarbeit](url) kann dabei helfen..."
+- Anchor "Ghostwriter Bachelorarbeit" → "...wer sich für eine [Ghostwriter Bachelorarbeit](url) interessiert, sollte..."
+- Anchor "SEO Texte" → "...hochwertige [SEO Texte](url) sind entscheidend für..."
+
+EXAMPLES of WRONG insertion (FORBIDDEN):
+- "...Begriffe wie [Ghostwriter Bachelorarbeit](url)..." ← treats anchor as a search term
+- "...auf Seiten wie [Ghostwriter Bachelorarbeit](url)..." ← treats as website name
+- "...bei [Ghostwriter Bachelorarbeit](url) findest du..." ← no article, wrong grammar
+- "...Mehr Infos: [anchor](url)" ← label style, not prose
 
 RULES:
-- The anchor phrase MUST function as a natural part of the sentence grammar (subject, object, genitive attribute, etc.)
-- Add correct articles, prepositions, and case endings AROUND the link as needed by ${langName} grammar
-- The reader should NOT notice it's a link — it must read as normal text
-- FORBIDDEN patterns (for non-URL anchors): "auf Seiten wie [anchor]", "bei [anchor]", "Mehr Infos: [anchor]", "See [anchor] for details", "[anchor] — als Beispiel", treating the anchor as a website name or label
-- Change as little of the existing text as possible — rewrite only ONE sentence
+- Add correct articles, prepositions, case endings AROUND the link as ${langName} grammar requires
+- The link must read as a natural noun phrase in the sentence (subject, object, attribute, etc.)
+- The reader should NOT notice it's a link — it reads as normal text
+- Change ONLY ONE sentence. Keep the rest of the content identical.
 - No quotes around the link`;
         }
         break;
@@ -1214,7 +1226,8 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
     suggestion: string,
     language: string,
     articleType: string = 'informational',
-    comment?: string
+    comment?: string,
+    maxWords?: number
   ): Promise<string> {
     const languageNames: Record<string, string> = {
       'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
@@ -1240,14 +1253,19 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
 6. COMMERCIAL ARTICLE: Keep pricing and commercial elements`;
     }
 
+    const wordLimitRule = maxWords
+      ? `2. HARD WORD LIMIT: Maximum ${maxWords} words. Being shorter is fine. Going over is NOT allowed.`
+      : `2. Keep the same approximate length or SHORTER. Never make the text longer.`;
+
     const systemPrompt = `You are a professional editor improving article content.
 Fix the issues while maintaining the original meaning and style.
 
 CRITICAL RULES:
 1. PRESERVE ALL LINKS - Any markdown links [text](url) MUST remain exactly as they are
-2. Keep the same approximate length
+${wordLimitRule}
 3. Write in ${langName}
-4. Return ONLY the improved content, no explanations${styleInstructions}${typeInstructions}`;
+4. Return ONLY the improved content, no explanations
+5. NEVER add new content, examples, or elaborations. Only FIX what is broken.${styleInstructions}${typeInstructions}`;
 
     const userPrompt = `Improve this block content:
 
@@ -1264,9 +1282,10 @@ ${issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}
 ${suggestion}
 
 IMPORTANT:
-- Fix the issues listed above
+- Fix ONLY the issues listed above
 - KEEP ALL LINKS EXACTLY AS THEY ARE: [text](url)
-- Maintain similar length and structure
+- Do NOT add new content or make the text longer
+${maxWords ? `- HARD LIMIT: ${maxWords} words maximum` : '- Keep similar length or shorter'}
 - Write in ${langName}
 
 Return the improved content:`;

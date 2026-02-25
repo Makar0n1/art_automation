@@ -1180,169 +1180,119 @@ export const startQueueProcessor = () => {
 
           await addLog(generationId, 'info', `📝 Fixing issues (iteration ${iteration})...`);
 
-          // Fix word count issues
-          if (!review.wordCountCheck.passed) {
-            const actual = review.wordCountCheck.actual;
-            const target = Math.round((configMinWords + configMaxWords) / 2);
+          // Helper: extract URLs from block content, fix, restore missing
+          const fixBlockWithUrlProtection = async (
+            block: { id: number; type: string; heading: string; content: string },
+            issues: string[],
+            suggestion: string,
+            maxWords?: number
+          ): Promise<string> => {
+            const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+            const originalUrls: string[] = [];
+            let match;
+            while ((match = urlRegex.exec(block.content)) !== null) {
+              originalUrls.push(match[2]);
+            }
 
-            if (actual < configMinWords) {
-              // Article too short — expand the longest content blocks
-              const contentBlocks = reviewedBlocks
-                .filter(b => b.type === 'h2' || b.type === 'h3')
-                .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
+            const fixedContent = await openRouterForReview.fixBlockContent(
+              { id: block.id, type: block.type, heading: block.heading, content: block.content },
+              issues,
+              suggestion,
+              generation.config.language,
+              generation.config.articleType || 'informational',
+              generation.config.comment,
+              maxWords
+            );
 
-              const wordsNeeded = configMinWords - actual;
-              const blocksToExpand = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
-              const extraWordsPerBlock = Math.ceil(wordsNeeded / blocksToExpand.length);
-
-              for (const block of blocksToExpand) {
-                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
-                if (blockIndex === -1 || !block.content) continue;
-
-                await addLog(generationId, 'thinking', `Expanding Block #${block.id} by ~${extraWordsPerBlock} words...`);
-                const fixedContent = await openRouterForReview.fixBlockContent(
-                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                  [`Content too short. Add approximately ${extraWordsPerBlock} more words of substantive content.`],
-                  `Expand with more details, examples, or explanations. Target: ~${target} total article words.`,
-                  generation.config.language,
-                  generation.config.articleType || 'informational',
-                  generation.config.comment
-                );
-                reviewedBlocks[blockIndex].content = fixedContent;
-              }
-            } else if (actual > configMaxWords) {
-              // Article too long — trim the longest content blocks
-              const contentBlocks = reviewedBlocks
-                .filter(b => b.type === 'h2' || b.type === 'h3')
-                .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0));
-
-              const wordsToRemove = actual - configMaxWords;
-              const blocksToTrim = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
-              const trimPerBlock = Math.ceil(wordsToRemove / blocksToTrim.length);
-
-              for (const block of blocksToTrim) {
-                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
-                if (blockIndex === -1 || !block.content) continue;
-
-                // Extract URLs before fixing
-                const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
-                const originalUrls: string[] = [];
-                let match;
-                while ((match = urlRegex.exec(block.content)) !== null) {
-                  originalUrls.push(match[2]);
+            let finalContent = fixedContent;
+            const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
+            if (missingUrls.length > 0) {
+              for (const url of missingUrls) {
+                const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+                if (linkMatch) {
+                  finalContent += `\n\n${linkMatch[0]}`;
                 }
-
-                await addLog(generationId, 'thinking', `Trimming Block #${block.id} by ~${trimPerBlock} words...`);
-                const fixedContent = await openRouterForReview.fixBlockContent(
-                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                  [`Content too long. Remove approximately ${trimPerBlock} words. Cut filler, redundancy, verbose phrases.`],
-                  `Make more concise. Remove padding and redundancy. Keep all links intact.`,
-                  generation.config.language,
-                  generation.config.articleType || 'informational',
-                  generation.config.comment
-                );
-
-                // Restore missing links
-                let finalContent = fixedContent;
-                const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
-                if (missingUrls.length > 0) {
-                  for (const url of missingUrls) {
-                    const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
-                    if (linkMatch) {
-                      finalContent += `\n\n${linkMatch[0]}`;
-                    }
-                  }
-                }
-                reviewedBlocks[blockIndex].content = finalContent;
               }
+            }
+            return finalContent;
+          };
+
+          // Calculate per-block word budget for the article
+          const contentBlockCount = reviewedBlocks.filter(b => b.type === 'h2' || b.type === 'h3').length;
+          const maxWordsPerBlock = contentBlockCount > 0
+            ? Math.ceil(configMaxWords * 0.85 / contentBlockCount)
+            : 300;
+
+          // ========== 1. FIX RHYTHM FIRST (with word ceiling) ==========
+          // Rhythm fixes go first because they rewrite blocks.
+          // Each fix has a maxWords ceiling so it can't inflate the article.
+          if (!review.rhythmCheck.passed) {
+            for (const issue of review.rhythmCheck.blocksToFix) {
+              const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
+              if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
+              const block = reviewedBlocks[blockIndex];
+              const currentWordCount = block.content.split(/\s+/).length;
+              // Ceiling: current words or max per block, whichever is SMALLER (never grow)
+              const ceiling = Math.min(currentWordCount, maxWordsPerBlock);
+
+              await addLog(generationId, 'thinking', `Fixing rhythm in Block #${block.id} (max ${ceiling} words): ${issue.issues.join(', ')}`);
+              reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
+                { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                issue.issues,
+                issue.suggestion,
+                ceiling
+              );
             }
           }
 
-          // Fix missing links (re-insert)
+          // ========== 2. FIX LINKS ==========
           if (!review.linkCountCheck.passed && review.linkCountCheck.missingUrls.length > 0) {
             await addLog(generationId, 'thinking', `Re-inserting ${review.linkCountCheck.missingUrls.length} missing link(s)...`);
             for (const missingUrl of review.linkCountCheck.missingUrls) {
               const linkConfig = (generation.config.internalLinks || []).find(l => l.url === missingUrl);
               if (!linkConfig) continue;
-
-              // Find a suitable block
               const suitableBlocks = reviewedBlocks.filter(b =>
                 b.type === 'h2' || b.type === 'h3' || b.type === 'intro' || b.type === 'conclusion'
               ).filter(b => b.content && !b.content.includes(missingUrl));
-
               if (suitableBlocks.length > 0) {
                 const targetBlock = suitableBlocks[0];
                 const blockIndex = reviewedBlocks.findIndex(b => b.id === targetBlock.id);
                 const anchor = linkConfig.isAnchorless ? linkConfig.url : (linkConfig.anchor || linkConfig.url);
-
-                const updatedContent = await openRouterForReview.insertSingleLink(
-                  targetBlock.content,
-                  targetBlock.heading,
-                  {
-                    url: linkConfig.url,
-                    anchor,
-                    isAnchorless: linkConfig.isAnchorless,
-                    displayType: linkConfig.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar',
-                  },
+                reviewedBlocks[blockIndex].content = await openRouterForReview.insertSingleLink(
+                  targetBlock.content, targetBlock.heading,
+                  { url: linkConfig.url, anchor, isAnchorless: linkConfig.isAnchorless, displayType: linkConfig.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar' },
                   generation.config.language
                 );
-                reviewedBlocks[blockIndex].content = updatedContent;
                 await addLog(generationId, 'info', `  Re-inserted: ${linkConfig.url} → Block #${targetBlock.id}`);
               }
             }
           }
 
-          // Fix link quality issues
+          // ========== 3. FIX LINK QUALITY ==========
           if (!review.linkQualityCheck.passed) {
             for (const issue of review.linkQualityCheck.issues) {
               const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
               if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
-
               const block = reviewedBlocks[blockIndex];
-
-              // Extract URLs before fixing
-              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
-              const originalUrls: string[] = [];
-              let match;
-              while ((match = urlRegex.exec(block.content)) !== null) {
-                originalUrls.push(match[2]);
-              }
-
+              const currentWordCount = block.content.split(/\s+/).length;
               await addLog(generationId, 'thinking', `Fixing link quality in Block #${block.id}: ${issue.issue}`);
-              const fixedContent = await openRouterForReview.fixBlockContent(
+              reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
                 { id: block.id, type: block.type, heading: block.heading, content: block.content },
                 [issue.issue],
-                'Remove quotes around links. Make link anchors flow naturally in the sentence. No "See also:" unless sidebar type.',
-                generation.config.language,
-                generation.config.articleType || 'informational',
-                generation.config.comment
+                'Remove quotes around links. Make link anchors flow naturally in the sentence.',
+                currentWordCount // Don't grow
               );
-
-              // Restore missing links
-              let finalContent = fixedContent;
-              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
-              if (missingUrls.length > 0) {
-                for (const url of missingUrls) {
-                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
-                  if (linkMatch) {
-                    finalContent += `\n\n${linkMatch[0]}`;
-                  }
-                }
-              }
-              reviewedBlocks[blockIndex].content = finalContent;
             }
           }
 
-          // Fix keyword density (over-optimized blocks)
+          // ========== 4. FIX KEYWORD DENSITY ==========
           if (!review.keywordDensityCheck.passed) {
-            // Find blocks with highest keyword density
             const keyword = generation.config.mainKeyword.toLowerCase();
             const blocksWithDensity = reviewedBlocks
               .filter(b => b.content && b.type !== 'h1')
               .map(b => {
-                const text = b.content.toLowerCase();
-                let count = 0;
-                let idx = 0;
+                const text = b.content!.toLowerCase();
+                let count = 0; let idx = 0;
                 while ((idx = text.indexOf(keyword, idx)) !== -1) { count++; idx += keyword.length; }
                 return { ...b, keywordCount: count };
               })
@@ -1352,76 +1302,66 @@ export const startQueueProcessor = () => {
             for (const block of blocksWithDensity.slice(0, 2)) {
               const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
               if (blockIndex === -1) continue;
-
-              // Extract URLs before fixing
-              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
-              const originalUrls: string[] = [];
-              let match;
-              while ((match = urlRegex.exec(block.content)) !== null) {
-                originalUrls.push(match[2]);
-              }
-
+              const currentWordCount = block.content!.split(/\s+/).length;
               await addLog(generationId, 'thinking', `Reducing main keyword in Block #${block.id} (${block.keywordCount} occurrences)...`);
-              const fixedContent = await openRouterForReview.fixBlockContent(
-                { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                [`Main keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times in this block — too many. Replace most occurrences with synonyms, pronouns, or rephrase entirely. Any remaining usage MUST be grammatically correct (proper case, declension, articles).`],
-                `Reduce keyword to max 1 occurrence per block. Use synonyms or rephrase. Never insert keywords as raw search terms or in quotes.`,
-                generation.config.language,
-                generation.config.articleType || 'informational',
-                generation.config.comment
+              reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
+                { id: block.id, type: block.type, heading: block.heading, content: block.content! },
+                [`Main keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times — too many. Replace with synonyms/pronouns.`],
+                `Max 1 occurrence per block. Use synonyms. Never raw keywords or quotes.`,
+                currentWordCount
               );
-
-              let finalContent = fixedContent;
-              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
-              if (missingUrls.length > 0) {
-                for (const url of missingUrls) {
-                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
-                  if (linkMatch) {
-                    finalContent += `\n\n${linkMatch[0]}`;
-                  }
-                }
-              }
-              reviewedBlocks[blockIndex].content = finalContent;
             }
           }
 
-          // Fix rhythm issues
-          if (!review.rhythmCheck.passed) {
-            for (const issue of review.rhythmCheck.blocksToFix) {
-              const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
-              if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
+          // ========== 5. FIX WORD COUNT LAST (after all other fixes) ==========
+          if (!review.wordCountCheck.passed) {
+            // Recount words after all fixes above
+            const currentTotal = reviewedBlocks
+              .filter(b => b.content && b.type !== 'h1')
+              .reduce((sum, b) => sum + (b.content?.split(/\s+/).length || 0), 0);
 
-              const block = reviewedBlocks[blockIndex];
+            if (currentTotal < configMinWords) {
+              const contentBlocks = reviewedBlocks
+                .filter(b => b.type === 'h2' || b.type === 'h3')
+                .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
+              const wordsNeeded = configMinWords - currentTotal;
+              const blocksToExpand = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
+              const extraPerBlock = Math.ceil(wordsNeeded / blocksToExpand.length);
 
-              // Extract URLs before fixing
-              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
-              const originalUrls: string[] = [];
-              let match;
-              while ((match = urlRegex.exec(block.content)) !== null) {
-                originalUrls.push(match[2]);
+              for (const block of blocksToExpand) {
+                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+                if (blockIndex === -1 || !block.content) continue;
+                await addLog(generationId, 'thinking', `Expanding Block #${block.id} by ~${extraPerBlock} words...`);
+                reviewedBlocks[blockIndex].content = await openRouterForReview.fixBlockContent(
+                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                  [`Too short. Add ~${extraPerBlock} words of substantive content.`],
+                  `Expand with details or examples.`,
+                  generation.config.language,
+                  generation.config.articleType || 'informational',
+                  generation.config.comment
+                );
               }
+            } else if (currentTotal > configMaxWords) {
+              const contentBlocks = reviewedBlocks
+                .filter(b => b.type === 'h2' || b.type === 'h3')
+                .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0));
+              const wordsOver = currentTotal - configMaxWords;
+              const blocksToTrim = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
 
-              await addLog(generationId, 'thinking', `Fixing rhythm in Block #${block.id}: ${issue.issues.join(', ')}`);
-              const fixedContent = await openRouterForReview.fixBlockContent(
-                { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                issue.issues,
-                issue.suggestion,
-                generation.config.language,
-                generation.config.articleType || 'informational',
-                generation.config.comment
-              );
-
-              let finalContent = fixedContent;
-              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
-              if (missingUrls.length > 0) {
-                for (const url of missingUrls) {
-                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
-                  if (linkMatch) {
-                    finalContent += `\n\n${linkMatch[0]}`;
-                  }
-                }
+              for (const block of blocksToTrim) {
+                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+                if (blockIndex === -1 || !block.content) continue;
+                const blockWords = block.content.split(/\s+/).length;
+                // Target: trim this block to maxWordsPerBlock or proportionally
+                const targetBlockWords = Math.min(blockWords, maxWordsPerBlock);
+                await addLog(generationId, 'thinking', `Trimming Block #${block.id}: ${blockWords} → ${targetBlockWords} words...`);
+                reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
+                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                  [`Too long (${blockWords} words). Cut to maximum ${targetBlockWords} words. Remove filler, redundancy, verbose phrases.`],
+                  `Be concise. Keep only essential information. Remove padding.`,
+                  targetBlockWords
+                );
               }
-              reviewedBlocks[blockIndex].content = finalContent;
             }
           }
 
