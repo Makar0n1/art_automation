@@ -271,15 +271,16 @@ COMPETITOR H1 TITLES (analyze these carefully):
 ${serpResults.map((r, i) => `${i + 1}. "${r.title}"`).join('\n')}
 
 CRITICAL H1 ANALYSIS TASK:
-1. Analyze the patterns in competitor titles above (numbers, "guide", year, questions, emotional hooks, authority words)
+1. Analyze the patterns in competitor titles above
 2. Find the angle ALL competitors MISS
 3. Create a 100% UNIQUE H1 title that:
    - Takes a DIFFERENT angle than ALL competitors above
-   - Includes main keyword "${mainKeyword}" naturally
-   - Is 40-65 characters for optimal SERP display
-   - Uses ONE proven pattern: specific number, unique benefit, curiosity gap, or authority signal
-   - Makes the user CHOOSE this article over every competitor
+   - Includes main keyword "${mainKeyword}" naturally (with proper grammar/declension)
+   - Is STRICTLY 40-65 characters (count carefully! This is a HARD LIMIT)
    - MUST NOT be a copy or slight variation of any competitor title
+   - FORBIDDEN in H1: invented numbers ("34 Kriterien", "21 Tipps"), year numbers, clickbait, parenthetical additions, em-dashes with extra clauses
+   - GOOD H1 pattern: concise, clear, one main promise. Example: "Ghostwriter für Soziale Arbeit: Leitfaden zur Wahl"
+   - BAD H1 pattern: "Ghostwriter für Soziale Arbeit: ehrliche Checkliste mit 34 Kriterien (Risiken, Qualität) – ohne Werbung" — TOO LONG, invented number, multiple sub-clauses
 
 TARGET: Create an article of ${maxWords} words (minimum ${minWords}). Generate ${targetContentBlocks} H2/H3 content blocks PLUS H1, intro, conclusion, and FAQ.
 Create a comprehensive analysis and generate a unique, optimized article structure.
@@ -325,22 +326,23 @@ Return ONLY valid JSON in this exact format:
 
 IMPORTANT RULES:
 1. All headings and instructions MUST be in ${langName}
-2. Block id=0 is H1 - Analyze competitor H1 titles and create a COMPETITIVE, UNIQUE title that:
-   - Is better than competitors (more specific, compelling, or comprehensive)
-   - Includes main keyword naturally
-   - Is 50-70 characters for optimal SEO
-   - NO questions in H1 block
-3. Block id=1 is always Introduction - heading MUST be EMPTY STRING "" (no "Einleitung"/"Introduction" heading!)
+2. Block id=0 is H1 (see H1 ANALYSIS TASK above). NO questions in H1 block.
+3. Block id=1 is always Introduction — heading MUST be EMPTY STRING "" (no "Einleitung"/"Introduction"!)
 4. Second-to-last block must be Conclusion (no questions)
-5. Last block must be FAQ (no questions), MAX 4-5 Q&A pairs, short and concise
-6. Content blocks (h2, h3) should have "questions" array with 0-5 SIMPLE research questions
+5. Last block must be FAQ (no questions), MAX 4 Q&A pairs
+6. Content blocks (h2, h3) may have "questions" array with 0-5 SIMPLE research questions
 7. CRITICAL: Generate exactly ${targetContentBlocks} H2/H3 content blocks (NOT counting H1, intro, conclusion, FAQ)
    - Use H2 for main sections and H3 for subsections under a parent H2
    - H3 blocks MUST immediately follow their parent H2 block
-   - Aim for a natural mix: e.g. 4 H2 + 3 H3, or 5 H2 + 2 H3 — H3 adds depth where needed
-   - Each block covers a distinct subtopic — no redundancy or filler
-8. Each block should have 3-8 LSI keywords relevant to that section
-9. TARGET ARTICLE LENGTH: aim for ${maxWords} words (minimum ${minWords}). The AI tends to underdeliver, so plan for the upper bound.
+   - Natural mix: e.g. 4 H2 + 3 H3
+   - Each block covers a DISTINCT subtopic — absolutely no redundancy between blocks
+8. HEADINGS RULES:
+   - Headings must be concise (5-10 words max)
+   - NEVER put invented numbers in headings ("34 Kriterien", "21 Tipps", "7 Schritte") — unless you can ACTUALLY deliver that exact count in the content
+   - NEVER put parenthetical clarifications in headings: "Heading (Risiken, Qualität, Passung)"
+   - Headings must sound natural in ${langName}, like a native journalist would write
+9. Each block should have 3-8 LSI keywords relevant to that section
+10. TARGET ARTICLE LENGTH: aim for ${maxWords} words (minimum ${minWords})
 
 CRITICAL - Question Generation Rules:
 - Each question MUST target a DIFFERENT factual aspect (definition, statistic, cost, process, example, name, date)
@@ -396,12 +398,21 @@ CRITICAL - Question Generation Rules:
         title = title.replace(/^#+\s*/, ''); // Strip leading # markdown
         title = title.replace(/^\*+|\*+$/g, ''); // Strip bold/italic markers
         title = title.replace(/^["'"'«»]+|["'"'«»]+$/g, ''); // Strip quotes
+        // Remove parenthetical additions: (Risiken, Qualität, ...)
+        title = title.replace(/\s*\([^)]*\)\s*/g, ' ');
+        // Remove em-dash/en-dash trailing clauses: " – ohne Werbung..."
+        title = title.replace(/\s*[–—]\s*[^–—]*$/, '');
         title = title.trim();
-        // Truncate to 70 chars max
-        if (title.length > 70) {
-          title = title.substring(0, 67) + '...';
+        // Hard limit: cut at last full word before 65 chars
+        if (title.length > 65) {
+          title = title.substring(0, 65);
+          const lastSpace = title.lastIndexOf(' ');
+          if (lastSpace > 30) {
+            title = title.substring(0, lastSpace);
+          }
         }
         h1Block.heading = title;
+        logger.info(`H1 title (${title.length} chars): "${title}"`);
       }
 
       logger.info('Structure analysis completed', {
@@ -629,15 +640,12 @@ Do not add any content, just the title.`;
           const targetContentBlocks = Math.max(5, Math.min(12, Math.ceil((targetWordCount - 400) / 220)));
           const wordsPerBlock = Math.round((targetWordCount - reservedWords) / targetContentBlocks);
           estimatedWords = Math.max(150, Math.min(500, wordsPerBlock));
-          blockTypeInstructions = `Write focused, high-quality content for this section.
-- Start directly with the content (heading is already defined)
-- Use paragraphs, bullet lists, or numbered lists as appropriate
-- Include tables if data comparison is relevant
-- Write ${estimatedWords}-${estimatedWords + 80} words for this section
-- Use the LSI keywords naturally throughout
-- Every sentence must add value - no padding or repetition
-- Be thorough and detailed — cover the subtopic fully, don't cut corners
-${hasFactsFromResearch ? '- MUST include the verified facts provided above' : '- Write informatively but avoid specific statistics, research citations, or precise numbers you cannot verify'}`;
+          blockTypeInstructions = `Write ${estimatedWords}-${estimatedWords + 80} words for this section.
+- Write in PROSE PARAGRAPHS (2-4 paragraphs). A bullet list is allowed ONLY if you are enumerating concrete items (max 5 items). No "wall of lists".
+- Start directly with content (heading is already defined).
+- Every sentence adds NEW information — no restating what was said before in this article.
+- Use LSI keywords with proper grammatical adaptation.
+${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally into prose.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}`;
         }
         break;
 
@@ -692,22 +700,26 @@ ${comment}
 `;
     }
 
-    const systemPrompt = `You are an expert SEO content writer creating high-quality article content in ${langName}.
+    const systemPrompt = `You are an expert content writer creating a high-quality article in ${langName}. You write like a skilled native ${langName} journalist — clear, natural, engaging.
 ${styleRules}
 CRITICAL RULES:
-1. Write ONLY in ${langName} language
-2. Match the style and tone of the previous content for consistency
-3. Do NOT invent statistics, research findings, or specific numbers unless provided in VERIFIED FACTS
-4. Use natural, engaging prose - not robotic or overly formal
-5. KEYWORD INTEGRATION: Keywords and LSI phrases are given in their BASE FORM (nominative/dictionary form). You MUST adapt them grammatically when using them in sentences:
+1. Write ONLY in ${langName}. Use natural phrasing that a native speaker would actually use — not textbook language, not robotic, not overly colloquial.
+2. Match the style and tone of the previous content for consistency.
+3. WRITING STYLE — PROSE FIRST:
+   - Write in flowing PARAGRAPHS. This is an article, not a PowerPoint.
+   - Bullet/numbered lists are allowed ONLY for genuinely enumerable items (steps in a process, a short comparison of 3-4 items). Max 1 list per section.
+   - Tables are allowed ONLY for structured data comparison (prices, features). Max 1 table per article.
+   - FORBIDDEN: sections that are entirely bullet points, "wall of lists", criteria lists disguised as content.
+   - Bold text: use sparingly for key terms on first mention, NOT for every other phrase.
+4. Do NOT invent statistics, numbers, percentages, research findings, or specific counts unless provided in VERIFIED FACTS. NEVER put invented numbers in headings (e.g. "34 Kriterien", "21 Tipps").
+5. KEYWORD INTEGRATION: Keywords and LSI phrases are given in BASE FORM. You MUST adapt them grammatically:
    - Add correct articles, prepositions, case endings as required by ${langName} grammar
-   - Decline nouns, conjugate verbs, adjust adjective endings to match the sentence context
-   - Example (German): keyword "Ghostwriter Bachelorarbeit" → "eines Ghostwriters für die Bachelorarbeit" (genitive), "mit einem Ghostwriter für Bachelorarbeiten" (dative), etc.
-   - The keyword must read as NATURAL TEXT written by a native speaker — never as a raw keyword stuffed into a sentence
-   - It is OK to split multi-word keywords across the sentence if it reads more naturally
-6. Do NOT add the heading - just write the content for this section
-7. Format with markdown where appropriate (lists, bold, tables)
-8. MAIN KEYWORD USAGE: The main keyword is provided for CONTEXT ONLY — so you understand the article's topic. Do NOT force it into the text. Do NOT write phrases like "when you search for [keyword]..." or use it as a quoted search term. If you naturally need to mention the concept, rephrase it or use synonyms. Only use the exact main keyword phrase if it fits organically and grammatically (with proper declension/articles). Prefer NOT using it at all — LSI keywords cover the semantic field.${typeRules}`;
+   - Decline nouns, conjugate verbs, adjust adjective endings
+   - The keyword must read as NATURAL TEXT — never as a raw phrase stuffed into a sentence
+   - It is OK to split multi-word keywords across the sentence if more natural
+6. Do NOT add the heading — just write the content for this section.
+7. NO REPETITION: Each paragraph must introduce NEW information or a new angle. Never restate the same idea in different words. If you've already said it — move on.
+8. MAIN KEYWORD: provided for CONTEXT ONLY. Do NOT force it into text. Prefer synonyms or not using it at all. FORBIDDEN: "when you search for [keyword]...", keyword in quotes, keyword as a search term.${typeRules}`;
 
     let userPrompt = ``;
 
@@ -1127,14 +1139,14 @@ Return the updated content with the link inserted:`;
         styleCheckRules = `\n7. STYLE COMPLIANCE - check if content follows: "${comment}"`;
       }
 
-      const systemPrompt = `You are a professional editor. Review article quality and identify blocks with REAL problems.
+      const systemPrompt = `You are a professional ${langName}-native editor. Review article quality and identify blocks with REAL problems.
 
 Check for:
-1. RHYTHM - unnatural sentence flow, monotonous structure, poor transitions between blocks
-2. WATER (filler) - unnecessary words, redundant phrases, padding content
-3. REPETITIONS - repeated words/phrases within or across blocks
-4. ANOMALIES - inconsistent tone, style breaks, context mismatches
-5. HALLUCINATIONS - unsupported claims or suspicious statistics${typeCheckRules}${styleCheckRules}
+1. UNNATURAL LANGUAGE - phrases that no native ${langName} speaker would use, awkward phrasing, textbook-style sentences
+2. EXCESSIVE LISTS - sections that are entirely bullet points instead of prose paragraphs. Articles should read as flowing text, not PowerPoint slides
+3. REPETITIONS - same idea restated in different words across blocks, redundant paragraphs, repeated phrases
+4. FILLER/WATER - unnecessary words, padding, vague statements that add no information
+5. FABRICATED CLAIMS - invented numbers, statistics, or specific counts not backed by sources (e.g. "34 Kriterien" but only 20 listed)${typeCheckRules}${styleCheckRules}
 
 CRITICAL: Return ONLY blocks with REAL, specific issues. Do NOT flag blocks just to fill a quota.
 Return valid JSON array.`;

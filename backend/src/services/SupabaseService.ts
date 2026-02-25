@@ -273,6 +273,78 @@ export class SupabaseService {
   }
 
   /**
+   * Clean scraped markdown: remove navigation, author bios, related posts,
+   * cookie banners, image-only lines, and other non-article content.
+   */
+  cleanMarkdown(md: string): string {
+    const lines = md.split('\n');
+    const cleaned: string[] = [];
+    let skipBlock = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Skip empty lines (preserve them for paragraph splitting later)
+      if (!trimmed) {
+        if (cleaned.length > 0) cleaned.push('');
+        continue;
+      }
+
+      // Skip image-only lines: [![...](...)  or ![...](...)
+      if (/^!?\[.*?\]\(.*?\)$/.test(trimmed) && !trimmed.startsWith('#')) continue;
+
+      // Skip gravatar/avatar lines
+      if (trimmed.includes('gravatar.com') || trimmed.includes('avatar')) continue;
+
+      // Skip lines that are ONLY markdown links with no surrounding text
+      // e.g. "[Category](https://...)" or "[Category](url) [Category2](url2)"
+      if (/^\[.+?\]\(.+?\)(\s+\[.+?\]\(.+?\))*$/.test(trimmed) && trimmed.length < 300) continue;
+
+      // Skip "Springe zum Inhalt" / "Skip to content" links
+      if (/springe zum inhalt|skip to content|jump to content/i.test(trimmed)) continue;
+
+      // Skip author bio blocks: "Von [Author]" + date patterns
+      if (/^Von\s+\[.+?\]\(.+?\)$/i.test(trimmed)) continue;
+      if (/^(Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}$/i.test(trimmed)) continue;
+
+      // Skip "More Posts" / "Website" author links
+      if (/^\[More Posts\]|^\[Website\]/i.test(trimmed)) continue;
+
+      // Skip author heading lines: "#### Von [Author](url)"
+      if (/^#{1,4}\s+Von\s+\[/i.test(trimmed)) continue;
+
+      // Skip cookie consent blocks
+      if (/cookie|AKZEPTIEREN|SPEICHERN|This website uses cookies|necessary cookies|non-necessary/i.test(trimmed)) {
+        skipBlock = true;
+        continue;
+      }
+
+      // Skip comment form hints
+      if (/E-Mail-Adresse wird nicht veröffentlicht|Erforderliche Felder|email.*will not be published/i.test(trimmed)) continue;
+
+      // Skip "Related posts" / "Ähnliche Beiträge" sections — detect by repeated #### + link patterns
+      if (/^#{3,4}\s+\[.+?\]\(.+?\)$/.test(trimmed)) continue;
+
+      // Skip short author bio lines
+      if (/^Geboren .{10,80}$/.test(trimmed) && trimmed.length < 120) continue;
+
+      // Resume after cookie block on next real content
+      if (skipBlock) {
+        // If we hit a heading or substantial paragraph, stop skipping
+        if (trimmed.startsWith('#') || trimmed.length > 100) {
+          skipBlock = false;
+        } else {
+          continue;
+        }
+      }
+
+      cleaned.push(line);
+    }
+
+    return cleaned.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  /**
    * Split text into chunks at paragraph/sentence boundaries
    */
   chunkText(text: string, maxChars: number = 2000): string[] {
@@ -340,8 +412,8 @@ export class SupabaseService {
 
         storedCount++;
 
-        // 300ms delay to avoid rate limits on embedding API
-        await new Promise(resolve => setTimeout(resolve, 300));
+        // 100ms delay between embedding calls
+        await new Promise(resolve => setTimeout(resolve, 100));
       } catch (error) {
         logger.warn(`Failed to store chunk (${chunk.content.substring(0, 50)}...):`, { error: error instanceof Error ? error.message : 'Unknown' });
       }
@@ -377,7 +449,7 @@ export class SupabaseService {
 
       let searchResults: Array<{ url: string; title: string }>;
       try {
-        searchResults = await firecrawlService.searchKeyword(question, region, language, 6);
+        searchResults = await firecrawlService.searchKeyword(question, region, language, 3);
       } catch (searchError) {
         logger.warn(`Firecrawl search failed for question: ${question.substring(0, 50)}`, { error: searchError instanceof Error ? searchError.message : 'Unknown' });
         await onLog?.('warn', `⚠️ Google search failed: ${searchError instanceof Error ? searchError.message : 'Unknown'}`);
@@ -389,81 +461,39 @@ export class SupabaseService {
         return null;
       }
 
-      await onLog?.('thinking', `📋 Found ${searchResults.length} pages to analyze`);
-
-      // Batch 1: results 1-3
-      const batch1 = searchResults.slice(0, 3);
-      for (let i = 0; i < batch1.length; i++) {
-        const result = batch1[i];
+      // Incremental: scrape 1 page → store → check → found? stop : next page
+      for (let i = 0; i < searchResults.length; i++) {
+        const result = searchResults[i];
         try {
-          await onLog?.('thinking', `📄 Scraping page ${i + 1}/${batch1.length}: ${getDomain(result.url)}...`);
+          await onLog?.('thinking', `📄 Scraping ${i + 1}/${searchResults.length}: ${getDomain(result.url)}...`);
           const scrapeResult = await firecrawlService.scrapeUrl(result.url);
           if (scrapeResult.success && scrapeResult.data?.markdown) {
-            const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
+            // Clean markdown: remove nav, author bios, related posts, cookie banners
+            const cleanedMarkdown = this.cleanMarkdown(scrapeResult.data.markdown);
+            const chunks = this.chunkText(cleanedMarkdown, 2000);
             if (chunks.length > 0) {
+              // Hard limit: max 15 chunks per page after cleaning
+              const limitedChunks = chunks.slice(0, 15);
               const stored = await this.storeChunks(
-                chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
+                limitedChunks.map(c => ({ content: c, metadata: { URL: result.url } }))
               );
-              logger.debug(`Stored ${stored} chunks from ${result.url}`);
-              await onLog?.('thinking', `💾 Stored ${stored} knowledge chunks from ${getDomain(result.url)}`);
+              await onLog?.('thinking', `💾 Stored ${stored} chunks from ${getDomain(result.url)}`);
             }
-          } else {
-            await onLog?.('thinking', `⏭️ No useful content from ${getDomain(result.url)}`);
           }
-
-          // 1s delay between scrape calls
-          await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (scrapeError) {
           logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
-          await onLog?.('warn', `⚠️ Failed to scrape ${getDomain(result.url)}`);
+          continue;
+        }
+
+        // Check after EACH page — stop as soon as answer found
+        const retryAnswer = await this.findAnswer(question);
+        if (retryAnswer) {
+          await onLog?.('info', `✅ Found answer after page ${i + 1} (similarity: ${Math.round(retryAnswer.similarity * 100)}%)`);
+          return retryAnswer;
         }
       }
 
-      // Retry search after batch 1
-      await onLog?.('thinking', `🔄 Retrying knowledge base search (batch 1)...`);
-      const retryAnswer1 = await this.findAnswer(question);
-      if (retryAnswer1) {
-        await onLog?.('info', `✅ Found answer after batch 1 (similarity: ${Math.round(retryAnswer1.similarity * 100)}%)`);
-        return retryAnswer1;
-      }
-
-      // Batch 2: results 4-6
-      const batch2 = searchResults.slice(3, 6);
-      if (batch2.length === 0) return null;
-
-      await onLog?.('thinking', `📄 Trying batch 2 (${batch2.length} more pages)...`);
-      for (let i = 0; i < batch2.length; i++) {
-        const result = batch2[i];
-        try {
-          await onLog?.('thinking', `📄 Scraping page ${i + 4}/${searchResults.length}: ${getDomain(result.url)}...`);
-          const scrapeResult = await firecrawlService.scrapeUrl(result.url);
-          if (scrapeResult.success && scrapeResult.data?.markdown) {
-            const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
-            if (chunks.length > 0) {
-              const stored = await this.storeChunks(
-                chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
-              );
-              logger.debug(`Stored ${stored} chunks from ${result.url}`);
-              await onLog?.('thinking', `💾 Stored ${stored} knowledge chunks from ${getDomain(result.url)}`);
-            }
-          }
-
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (scrapeError) {
-          logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
-          await onLog?.('warn', `⚠️ Failed to scrape ${getDomain(result.url)}`);
-        }
-      }
-
-      // Retry search after batch 2
-      await onLog?.('thinking', `🔄 Retrying knowledge base search (batch 2)...`);
-      const retryAnswer2 = await this.findAnswer(question);
-      if (retryAnswer2) {
-        await onLog?.('info', `✅ Found answer after batch 2 (similarity: ${Math.round(retryAnswer2.similarity * 100)}%)`);
-        return retryAnswer2;
-      }
-
-      // Phase 3: No answer found
+      // No answer after all 3 pages
       return null;
     } catch (error) {
       logger.error(`findAnswerWithWebFallback failed for: "${question.substring(0, 50)}"`, { error: error instanceof Error ? error.message : 'Unknown' });
