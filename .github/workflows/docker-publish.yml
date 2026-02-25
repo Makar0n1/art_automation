@@ -92,3 +92,40 @@ jobs:
             NEXT_PUBLIC_API_URL=https://${{ vars.API_DOMAIN }}/api
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy to production server
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/seo-articles/deploy
+            echo "=== Pulling latest images ==="
+            docker compose pull
+
+            echo "=== Stopping all services ==="
+            docker compose down
+            sleep 30
+
+            echo "=== Starting services ==="
+            docker compose up -d --remove-orphans
+            sleep 30
+
+            echo "=== Checking services ==="
+            docker compose ps
+
+            echo "=== Health check ==="
+            if docker compose exec -T seo-api wget --no-verbose --tries=3 --spider http://localhost:3001/api/health 2>/dev/null; then
+              echo "API is healthy"
+            else
+              echo "API health check FAILED"
+              docker compose logs --tail=30 seo-api
+              exit 1
+            fi
