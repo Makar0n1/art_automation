@@ -186,12 +186,13 @@ export class OpenRouterService {
       ? Math.round(wordCounts.reduce((a, b) => a + b, 0) / wordCounts.length)
       : 2000;
 
-    // Use user's target word count (midpoint) as the working average
-    const targetWordCount = Math.round((minWords + maxWords) / 2);
+    // Target the UPPER BOUND — AI consistently underdelivers word count
+    const targetWordCount = maxWords;
     const averageWordCount = targetWordCount;
 
-    // Calculate target blocks based on word count: ceil(target/220), clamp 5-12
-    const targetBlocks = Math.max(5, Math.min(12, Math.ceil(targetWordCount / 220)));
+    // Calculate target H2/H3 content blocks (excluding H1, intro, conclusion, FAQ)
+    const targetContentBlocks = Math.max(5, Math.min(12, Math.ceil((targetWordCount - 400) / 220)));
+    // Note: total blocks = targetContentBlocks + 4 (H1, intro, conclusion, FAQ)
 
     // Prepare competitor structures for analysis
     const structuresText = serpResults
@@ -280,7 +281,7 @@ CRITICAL H1 ANALYSIS TASK:
    - Makes the user CHOOSE this article over every competitor
    - MUST NOT be a copy or slight variation of any competitor title
 
-TARGET: Create a focused ${minWords}-${maxWords} word article (${targetBlocks} content blocks, NO bloat or filler).
+TARGET: Create an article of ${maxWords} words (minimum ${minWords}). Generate ${targetContentBlocks} H2/H3 content blocks PLUS H1, intro, conclusion, and FAQ.
 Create a comprehensive analysis and generate a unique, optimized article structure.
 
 Return ONLY valid JSON in this exact format:
@@ -333,12 +334,13 @@ IMPORTANT RULES:
 4. Second-to-last block must be Conclusion (no questions)
 5. Last block must be FAQ (no questions), MAX 4-5 Q&A pairs, short and concise
 6. Content blocks (h2, h3) should have "questions" array with 0-5 SIMPLE research questions
-7. CRITICAL: Include ${targetBlocks} content blocks total for focused, high-quality coverage
-   - Quality over quantity
-   - Each block covers essential subtopics only
-   - Avoid redundant or filler sections
+7. CRITICAL: Generate exactly ${targetContentBlocks} H2/H3 content blocks (NOT counting H1, intro, conclusion, FAQ)
+   - Use H2 for main sections and H3 for subsections under a parent H2
+   - H3 blocks MUST immediately follow their parent H2 block
+   - Aim for a natural mix: e.g. 4 H2 + 3 H3, or 5 H2 + 2 H3 — H3 adds depth where needed
+   - Each block covers a distinct subtopic — no redundancy or filler
 8. Each block should have 3-8 LSI keywords relevant to that section
-9. TARGET ARTICLE LENGTH: ${minWords}-${maxWords} words total (compact, focused, no bloat)
+9. TARGET ARTICLE LENGTH: aim for ${maxWords} words (minimum ${minWords}). The AI tends to underdeliver, so plan for the upper bound.
 
 CRITICAL - Question Generation Rules:
 - Each question MUST target a DIFFERENT factual aspect (definition, statistic, cost, process, example, name, date)
@@ -604,52 +606,53 @@ Do not add any content, just the title.`;
 
       case 'intro':
         {
-          // Scale intro proportionally: ~8% of target word count
-          const introTarget = Math.round(targetWordCount * 0.08);
-          const introMin = Math.max(80, introTarget - 25);
-          const introMax = introTarget + 25;
+          // Scale intro proportionally: ~10% of target word count
+          const introTarget = Math.round(targetWordCount * 0.10);
+          const introMin = Math.max(120, introTarget - 30);
+          const introMax = introTarget + 40;
           estimatedWords = introTarget;
-          blockTypeInstructions = `Write an engaging introduction paragraph.
-- Hook the reader immediately
+          blockTypeInstructions = `Write an engaging introduction (2-3 paragraphs).
+- Hook the reader immediately with a relatable scenario or question
 - Introduce the topic and its importance
 - Preview what the article will cover
 - Include the main keyword naturally
-- ${introMin}-${introMax} words (concise and focused)`;
+- ${introMin}-${introMax} words — make it substantial, not a throwaway paragraph`;
         }
         break;
 
       case 'h2':
       case 'h3':
         {
-          // Calculate words per content block dynamically
-          // Reserve ~15% for intro+conclusion+faq, rest split among content blocks
+          // Calculate words per content block — same formula as analyzeStructures
+          // Reserve ~15% for intro+conclusion+faq, rest split among H2/H3 content blocks
           const reservedWords = Math.round(targetWordCount * 0.15);
-          const contentBlocks = Math.max(4, Math.ceil(targetWordCount / 220) - 3);
-          const wordsPerBlock = Math.round((targetWordCount - reservedWords) / contentBlocks);
-          estimatedWords = Math.max(120, Math.min(500, wordsPerBlock));
+          const targetContentBlocks = Math.max(5, Math.min(12, Math.ceil((targetWordCount - 400) / 220)));
+          const wordsPerBlock = Math.round((targetWordCount - reservedWords) / targetContentBlocks);
+          estimatedWords = Math.max(150, Math.min(500, wordsPerBlock));
           blockTypeInstructions = `Write focused, high-quality content for this section.
 - Start directly with the content (heading is already defined)
 - Use paragraphs, bullet lists, or numbered lists as appropriate
 - Include tables if data comparison is relevant
-- ${estimatedWords}-${estimatedWords + 50} words (concise, NO filler)
+- Write ${estimatedWords}-${estimatedWords + 80} words for this section
 - Use the LSI keywords naturally throughout
 - Every sentence must add value - no padding or repetition
+- Be thorough and detailed — cover the subtopic fully, don't cut corners
 ${hasFactsFromResearch ? '- MUST include the verified facts provided above' : '- Write informatively but avoid specific statistics, research citations, or precise numbers you cannot verify'}`;
         }
         break;
 
       case 'conclusion':
         {
-          // Scale conclusion: ~6% of target word count
-          const concTarget = Math.round(targetWordCount * 0.06);
-          const concMin = Math.max(60, concTarget - 20);
-          const concMax = concTarget + 20;
+          // Scale conclusion: ~8% of target word count
+          const concTarget = Math.round(targetWordCount * 0.08);
+          const concMin = Math.max(80, concTarget - 20);
+          const concMax = concTarget + 30;
           estimatedWords = concTarget;
-          blockTypeInstructions = `Write a strong, concise conclusion.
+          blockTypeInstructions = `Write a strong conclusion.
 - Summarize the key points covered
 - Reinforce the main message
 - End with a call to action or final thought
-- ${concMin}-${concMax} words (brief and impactful)`;
+- ${concMin}-${concMax} words`;
         }
         break;
 
@@ -696,9 +699,15 @@ CRITICAL RULES:
 2. Match the style and tone of the previous content for consistency
 3. Do NOT invent statistics, research findings, or specific numbers unless provided in VERIFIED FACTS
 4. Use natural, engaging prose - not robotic or overly formal
-5. Incorporate LSI keywords naturally, don't force them
+5. KEYWORD INTEGRATION: Keywords and LSI phrases are given in their BASE FORM (nominative/dictionary form). You MUST adapt them grammatically when using them in sentences:
+   - Add correct articles, prepositions, case endings as required by ${langName} grammar
+   - Decline nouns, conjugate verbs, adjust adjective endings to match the sentence context
+   - Example (German): keyword "Ghostwriter Bachelorarbeit" → "eines Ghostwriters für die Bachelorarbeit" (genitive), "mit einem Ghostwriter für Bachelorarbeiten" (dative), etc.
+   - The keyword must read as NATURAL TEXT written by a native speaker — never as a raw keyword stuffed into a sentence
+   - It is OK to split multi-word keywords across the sentence if it reads more naturally
 6. Do NOT add the heading - just write the content for this section
-7. Format with markdown where appropriate (lists, bold, tables)${typeRules}`;
+7. Format with markdown where appropriate (lists, bold, tables)
+8. MAIN KEYWORD USAGE: The main keyword is provided for CONTEXT ONLY — so you understand the article's topic. Do NOT force it into the text. Do NOT write phrases like "when you search for [keyword]..." or use it as a quoted search term. If you naturally need to mention the concept, rephrase it or use synonyms. Only use the exact main keyword phrase if it fits organically and grammatically (with proper declension/articles). Prefer NOT using it at all — LSI keywords cover the semantic field.${typeRules}`;
 
     let userPrompt = ``;
 
@@ -718,7 +727,7 @@ SECTION HEADING: ${block.heading}
 SECTION TYPE: ${block.type.toUpperCase()}
 WRITING INSTRUCTION: ${block.instruction}
 LSI KEYWORDS TO USE: ${block.lsi.join(', ')}
-MAIN KEYWORD: ${mainKeyword}
+MAIN KEYWORD (for context only — see rule 8): ${mainKeyword}
 ARTICLE TYPE: ${articleType}${comment ? `\nAUTHOR'S INSTRUCTIONS: ${comment}` : ''}
 ${factsSection}
 ${blockTypeInstructions}
@@ -876,7 +885,19 @@ Write the content now:`;
         if (link.isAnchorless) {
           insertionInstruction = `Insert this link INLINE into the text. Find a natural place to add a phrase like "Learn more at ${linkMarkdown}" or "Details available at ${linkMarkdown}". The link must flow grammatically within or after an existing sentence. Do NOT use quotes around the link. Do NOT add "See also" or similar headings.`;
         } else {
-          insertionInstruction = `Insert this link INLINE into the text. Rewrite ONE sentence to naturally incorporate the anchor text "${link.anchor}" as a clickable link: ${linkMarkdown}. The anchor must flow grammatically as part of the sentence — no quotes, no "See also", no keyword stuffing. Temperature: be conservative, change as little as possible.`;
+          insertionInstruction = `Insert this link INLINE into the text.
+
+STEP 1: Understand the anchor phrase "${link.anchor}" — what does it mean? What part of speech is it? (noun phrase, verb phrase, compound noun, etc.)
+STEP 2: Build a grammatically correct ${langName} sentence where "${link.anchor}" fits naturally with proper case/declension/articles.
+STEP 3: Replace the anchor words in that sentence with the markdown link ${linkMarkdown}.
+
+RULES:
+- The anchor phrase MUST function as a natural part of the sentence grammar (subject, object, genitive attribute, etc.)
+- Add correct articles, prepositions, and case endings AROUND the link as needed by ${langName} grammar
+- The reader should NOT notice it's a link — it must read as normal text
+- FORBIDDEN patterns (for non-URL anchors): "auf Seiten wie [anchor]", "bei [anchor]", "Mehr Infos: [anchor]", "See [anchor] for details", "[anchor] — als Beispiel", treating the anchor as a website name or label
+- Change as little of the existing text as possible — rewrite only ONE sentence
+- No quotes around the link`;
         }
         break;
       case 'list_start':
@@ -983,7 +1004,7 @@ Return the updated content with the link inserted:`;
     wordCountCheck: { passed: boolean; actual: number; min: number; max: number };
     linkCountCheck: { passed: boolean; actual: number; expected: number; missingUrls: string[] };
     linkQualityCheck: { passed: boolean; issues: Array<{ blockId: number; issue: string }> };
-    keywordDensityCheck: { passed: boolean; density: number; issues: string[] };
+    keywordDensityCheck: { passed: boolean; count: number; issues: string[] };
     rhythmCheck: { passed: boolean; blocksToFix: Array<{ blockId: number; issues: string[]; suggestion: string }> };
   }> {
     const languageNames: Record<string, string> = {
@@ -1054,27 +1075,35 @@ Return the updated content with the link inserted:`;
       issues: linkQualityIssues,
     };
 
-    // === CHECK 4: Keyword density ===
+    // === CHECK 4: Main keyword usage (max 4-5 occurrences, all grammatically correct) ===
     const keywordLower = mainKeyword.toLowerCase();
     const textLower = fullText.toLowerCase();
-    const keywordWords = keywordLower.split(/\s+/).length;
     let keywordCount = 0;
     let searchIndex = 0;
     while ((searchIndex = textLower.indexOf(keywordLower, searchIndex)) !== -1) {
       keywordCount++;
       searchIndex += keywordLower.length;
     }
-    const totalWords = actualWordCount;
-    const density = totalWords > 0 ? (keywordCount * keywordWords / totalWords) * 100 : 0;
     const densityIssues: string[] = [];
-    if (density > 3) {
-      densityIssues.push(`Main keyword "${mainKeyword}" density is ${density.toFixed(1)}% (over 3% threshold — over-optimized)`);
-    } else if (density < 0.5 && totalWords > 300) {
-      densityIssues.push(`Main keyword "${mainKeyword}" density is ${density.toFixed(1)}% (under 0.5% — may be too low)`);
+    const MAX_KEYWORD_OCCURRENCES = 5;
+    if (keywordCount > MAX_KEYWORD_OCCURRENCES) {
+      densityIssues.push(`Main keyword "${mainKeyword}" appears ${keywordCount} times (max ${MAX_KEYWORD_OCCURRENCES}). Reduce occurrences — replace extras with synonyms or rephrase. High-frequency keywords spammed in text trigger search engine spam filters.`);
+    }
+    // Check for raw/ungrammatical usage: keyword surrounded by quotes, used as a search term, etc.
+    const rawPatterns = [
+      new RegExp(`"${keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'gi'), // "keyword" in quotes
+      new RegExp(`«${keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}»`, 'gi'), // «keyword» in quotes
+      new RegExp(`(suche nach|searching for|search for|поиск|при поиске|когда ищешь)\\s+.{0,10}${keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'gi'), // "when searching for keyword"
+    ];
+    for (const pattern of rawPatterns) {
+      const matches = fullText.match(pattern);
+      if (matches && matches.length > 0) {
+        densityIssues.push(`Main keyword used as a raw search term or in quotes: "${matches[0]}". Rephrase to use the concept naturally with proper grammar.`);
+      }
     }
     const keywordDensityCheck = {
-      passed: density <= 3 && (density >= 0.5 || totalWords <= 300),
-      density: Math.round(density * 10) / 10,
+      passed: keywordCount <= MAX_KEYWORD_OCCURRENCES && densityIssues.length === 0,
+      count: keywordCount,
       issues: densityIssues,
     };
 
@@ -1144,7 +1173,7 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       wordCount: `${actualWordCount} (${minWords}-${maxWords})`,
       links: `${presentUrls.length}/${configuredLinks.length}`,
       linkQuality: linkQualityIssues.length === 0 ? 'OK' : `${linkQualityIssues.length} issues`,
-      keywordDensity: `${density.toFixed(1)}%`,
+      mainKeywordCount: `${keywordCount}/${MAX_KEYWORD_OCCURRENCES}`,
       rhythmIssues: rhythmBlocksToFix.length,
     });
 

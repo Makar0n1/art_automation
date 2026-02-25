@@ -45,6 +45,11 @@ interface OpenAIEmbeddingResponse {
 }
 
 /**
+ * Callback for emitting logs visible on frontend
+ */
+export type LogCallback = (level: 'info' | 'thinking' | 'warn', message: string) => void | Promise<void>;
+
+/**
  * Supabase Vector Search Service
  * Handles question answering via semantic search in Supabase
  */
@@ -308,7 +313,7 @@ export class SupabaseService {
   /**
    * Store text chunks with embeddings in Supabase DataBaseChunks table
    */
-  async storeChunks(chunks: Array<{ content: string; metadata: { URL: string } }>): Promise<number> {
+  async storeChunks(chunks: Array<{ content: string; metadata: { URL: string } }>, onLog?: LogCallback): Promise<number> {
     let storedCount = 0;
 
     for (const chunk of chunks) {
@@ -353,8 +358,14 @@ export class SupabaseService {
     question: string,
     firecrawlService: { searchKeyword: (q: string, region: string, language: string, limit: number) => Promise<Array<{ url: string; title: string }>>; scrapeUrl: (url: string) => Promise<{ success: boolean; data?: { markdown?: string } }> },
     language: string,
-    region: string
+    region: string,
+    onLog?: LogCallback
   ): Promise<AnsweredQuestion | null> {
+    // Helper to extract domain from URL for readable logs
+    const getDomain = (url: string): string => {
+      try { return new URL(url).hostname; } catch { return url.substring(0, 40); }
+    };
+
     try {
       // Phase 1: Try Supabase directly
       const directAnswer = await this.findAnswer(question);
@@ -362,21 +373,30 @@ export class SupabaseService {
 
       // Phase 2: Web fallback — search for the question
       logger.info(`Web fallback for: "${question.substring(0, 60)}..."`);
+      await onLog?.('thinking', `🔎 Searching Google for related pages...`);
 
       let searchResults: Array<{ url: string; title: string }>;
       try {
         searchResults = await firecrawlService.searchKeyword(question, region, language, 6);
       } catch (searchError) {
         logger.warn(`Firecrawl search failed for question: ${question.substring(0, 50)}`, { error: searchError instanceof Error ? searchError.message : 'Unknown' });
+        await onLog?.('warn', `⚠️ Google search failed: ${searchError instanceof Error ? searchError.message : 'Unknown'}`);
         return null;
       }
 
-      if (searchResults.length === 0) return null;
+      if (searchResults.length === 0) {
+        await onLog?.('thinking', `No search results found`);
+        return null;
+      }
+
+      await onLog?.('thinking', `📋 Found ${searchResults.length} pages to analyze`);
 
       // Batch 1: results 1-3
       const batch1 = searchResults.slice(0, 3);
-      for (const result of batch1) {
+      for (let i = 0; i < batch1.length; i++) {
+        const result = batch1[i];
         try {
+          await onLog?.('thinking', `📄 Scraping page ${i + 1}/${batch1.length}: ${getDomain(result.url)}...`);
           const scrapeResult = await firecrawlService.scrapeUrl(result.url);
           if (scrapeResult.success && scrapeResult.data?.markdown) {
             const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
@@ -385,24 +405,37 @@ export class SupabaseService {
                 chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
               );
               logger.debug(`Stored ${stored} chunks from ${result.url}`);
+              await onLog?.('thinking', `💾 Stored ${stored} knowledge chunks from ${getDomain(result.url)}`);
             }
+          } else {
+            await onLog?.('thinking', `⏭️ No useful content from ${getDomain(result.url)}`);
           }
 
           // 1s delay between scrape calls
           await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (scrapeError) {
           logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
+          await onLog?.('warn', `⚠️ Failed to scrape ${getDomain(result.url)}`);
         }
       }
 
       // Retry search after batch 1
+      await onLog?.('thinking', `🔄 Retrying knowledge base search (batch 1)...`);
       const retryAnswer1 = await this.findAnswer(question);
-      if (retryAnswer1) return retryAnswer1;
+      if (retryAnswer1) {
+        await onLog?.('info', `✅ Found answer after batch 1 (similarity: ${Math.round(retryAnswer1.similarity * 100)}%)`);
+        return retryAnswer1;
+      }
 
       // Batch 2: results 4-6
       const batch2 = searchResults.slice(3, 6);
-      for (const result of batch2) {
+      if (batch2.length === 0) return null;
+
+      await onLog?.('thinking', `📄 Trying batch 2 (${batch2.length} more pages)...`);
+      for (let i = 0; i < batch2.length; i++) {
+        const result = batch2[i];
         try {
+          await onLog?.('thinking', `📄 Scraping page ${i + 4}/${searchResults.length}: ${getDomain(result.url)}...`);
           const scrapeResult = await firecrawlService.scrapeUrl(result.url);
           if (scrapeResult.success && scrapeResult.data?.markdown) {
             const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
@@ -411,18 +444,24 @@ export class SupabaseService {
                 chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
               );
               logger.debug(`Stored ${stored} chunks from ${result.url}`);
+              await onLog?.('thinking', `💾 Stored ${stored} knowledge chunks from ${getDomain(result.url)}`);
             }
           }
 
           await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (scrapeError) {
           logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
+          await onLog?.('warn', `⚠️ Failed to scrape ${getDomain(result.url)}`);
         }
       }
 
       // Retry search after batch 2
+      await onLog?.('thinking', `🔄 Retrying knowledge base search (batch 2)...`);
       const retryAnswer2 = await this.findAnswer(question);
-      if (retryAnswer2) return retryAnswer2;
+      if (retryAnswer2) {
+        await onLog?.('info', `✅ Found answer after batch 2 (similarity: ${Math.round(retryAnswer2.similarity * 100)}%)`);
+        return retryAnswer2;
+      }
 
       // Phase 3: No answer found
       return null;

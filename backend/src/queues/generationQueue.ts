@@ -150,6 +150,19 @@ const emitBlocks = (generationId: string, blocks: ArticleBlock[]) => {
 };
 
 /**
+ * Progress calculation: 7 steps, each gets 1/7 of the bar
+ * stepNumber: 1-7, stepProgress: 0.0-1.0 (fraction completed within step)
+ */
+const TOTAL_STEPS = 7;
+const STEP_SIZE = 100 / TOTAL_STEPS; // ~14.28
+
+const calcProgress = (stepNumber: number, stepProgress: number = 0): number => {
+  const base = (stepNumber - 1) * STEP_SIZE;
+  const within = stepProgress * STEP_SIZE;
+  return Math.min(Math.round(base + within), 100);
+};
+
+/**
  * Strip any markdown heading from the beginning of content
  * Fixes issue where AI sometimes includes heading despite instructions not to
  */
@@ -265,14 +278,14 @@ export const startQueueProcessor = () => {
       }
 
       // Update status to processing
-      await updateProgress(generationId, GenerationStatus.PROCESSING, 5);
+      await updateProgress(generationId, GenerationStatus.PROCESSING, calcProgress(1, 0));
       await addLog(generationId, 'info', '🚀 Starting article generation...');
 
       // Initialize Firecrawl service
       const firecrawl = new FirecrawlService(apiKeys.firecrawl);
 
       // Start SERP parsing
-      await updateProgress(generationId, GenerationStatus.PARSING_SERP, 10);
+      await updateProgress(generationId, GenerationStatus.PARSING_SERP, calcProgress(1, 0.05));
       await addLog(generationId, 'info', `🔍 Searching for: "${generation.config.mainKeyword}"`);
       await addLog(generationId, 'thinking', 'Connecting to Firecrawl API and fetching search results...');
 
@@ -287,9 +300,8 @@ export const startQueueProcessor = () => {
           async (result, index) => {
             serpResults.push(result);
 
-            // Calculate progress (10-50% for SERP parsing)
-            const progress = Math.round(10 + (index + 1) * 4);
-            await updateProgress(generationId, GenerationStatus.PARSING_SERP, progress);
+            // Calculate progress within Step 1 (0-14%)
+            await updateProgress(generationId, GenerationStatus.PARSING_SERP, calcProgress(1, (index + 1) / 10));
 
             // Log each result
             if (result.error) {
@@ -367,7 +379,7 @@ export const startQueueProcessor = () => {
         throw new Error('OpenRouter API key not configured');
       }
 
-      await updateProgress(generationId, GenerationStatus.ANALYZING_STRUCTURE, 55);
+      await updateProgress(generationId, GenerationStatus.ANALYZING_STRUCTURE, calcProgress(2, 0));
       await addLog(generationId, 'info', '🧠 Starting AI structure analysis...');
       await addLog(generationId, 'thinking', 'Analyzing competitor structures with AI to create optimal article outline...');
 
@@ -393,7 +405,7 @@ export const startQueueProcessor = () => {
           freshGeneration.config.maxWords || 1800
         );
 
-        await updateProgress(generationId, GenerationStatus.ANALYZING_STRUCTURE, 65);
+        await updateProgress(generationId, GenerationStatus.ANALYZING_STRUCTURE, calcProgress(2, 1));
 
         // Log analysis results
         await addLog(generationId, 'info', '📋 Structure analysis completed!', {
@@ -454,7 +466,7 @@ export const startQueueProcessor = () => {
         throw new Error('OpenRouter API key not configured');
       }
 
-      await updateProgress(generationId, GenerationStatus.ENRICHING_BLOCKS, 75);
+      await updateProgress(generationId, GenerationStatus.ENRICHING_BLOCKS, calcProgress(3, 0));
       await addLog(generationId, 'info', '✨ Enriching block instructions...');
       await addLog(generationId, 'thinking', 'Adding detailed writing instructions and research questions to each block...');
 
@@ -478,7 +490,7 @@ export const startQueueProcessor = () => {
           freshGeneration.config.comment
         );
 
-        await updateProgress(generationId, GenerationStatus.ENRICHING_BLOCKS, 85);
+        await updateProgress(generationId, GenerationStatus.ENRICHING_BLOCKS, calcProgress(3, 1));
 
         // Save enriched blocks
         await Generation.findByIdAndUpdate(generationId, {
@@ -533,7 +545,7 @@ export const startQueueProcessor = () => {
         throw new Error('OpenRouter API key not configured (required for embeddings)');
       }
 
-      await updateProgress(generationId, GenerationStatus.ANSWERING_QUESTIONS, 90);
+      await updateProgress(generationId, GenerationStatus.ANSWERING_QUESTIONS, calcProgress(4, 0));
       await addLog(generationId, 'info', '🔍 Searching for answers to research questions...');
       await addLog(generationId, 'thinking', 'Connecting to Supabase vector database to find relevant information...');
 
@@ -615,7 +627,9 @@ export const startQueueProcessor = () => {
                   question,
                   firecrawlForSearch,
                   freshGeneration.config.language,
-                  freshGeneration.config.region
+                  freshGeneration.config.region,
+                  // Forward logs to frontend via addLog
+                  (level, message) => addLog(generationId, level, message)
                 );
 
                 if (answer) {
@@ -632,10 +646,9 @@ export const startQueueProcessor = () => {
                 await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
               }
 
-              // Update progress
+              // Update progress within Step 4 (43-57%)
               processedQuestions++;
-              const progressPercent = Math.round(90 + (processedQuestions / totalQuestions) * 5);
-              await updateProgress(generationId, GenerationStatus.ANSWERING_QUESTIONS, Math.min(progressPercent, 95));
+              await updateProgress(generationId, GenerationStatus.ANSWERING_QUESTIONS, calcProgress(4, processedQuestions / totalQuestions));
 
             } catch (error) {
               await addLog(generationId, 'warn', `⚠️ Error searching for answer: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -710,7 +723,7 @@ export const startQueueProcessor = () => {
       throw new Error('OpenRouter API key not configured');
     }
 
-    await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, 97);
+    await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, calcProgress(5, 0));
     await addLog(generationId, 'info', '📝 Starting article writing...');
     await addLog(generationId, 'thinking', 'Generating content block by block with accumulated context for style consistency...');
 
@@ -738,9 +751,8 @@ export const startQueueProcessor = () => {
       for (let i = 0; i < totalBlocks; i++) {
         const block = freshGeneration.articleBlocks[i] as ArticleBlock;
 
-        // Calculate progress (97-99%)
-        const progressPercent = Math.round(97 + (i / totalBlocks) * 2);
-        await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, progressPercent);
+        // Calculate progress within Step 5 (57-71%)
+        await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, calcProgress(5, i / totalBlocks));
 
         await addLog(generationId, 'thinking', `Writing Block #${block.id} [${block.type.toUpperCase()}]: "${block.heading}"`);
 
@@ -899,7 +911,7 @@ export const startQueueProcessor = () => {
     let openRouterForLinks: OpenRouterService | null = null;
 
     if (internalLinks.length > 0) {
-      await updateProgress(generationId, GenerationStatus.INSERTING_LINKS, 99);
+      await updateProgress(generationId, GenerationStatus.INSERTING_LINKS, calcProgress(6, 0));
       await addLog(generationId, 'info', `🔗 Starting internal link insertion (${internalLinks.length} links, 1 link = 1 AI call)...`);
 
       try {
@@ -974,6 +986,9 @@ export const startQueueProcessor = () => {
             isAnchorless: originalLink.isAnchorless,
             displayType: originalLink.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar',
           };
+
+          // Update progress within Step 6 (71-86%)
+          await updateProgress(generationId, GenerationStatus.INSERTING_LINKS, calcProgress(6, selection.linkIndex / internalLinks.length));
 
           await addLog(generationId, 'thinking', `Inserting link ${selection.linkIndex + 1}/${internalLinks.length}: [${linkInfo.anchor}](${linkInfo.url}) → Block #${block.id} "${block.heading}" (${linkInfo.displayType})...`);
 
@@ -1079,7 +1094,7 @@ export const startQueueProcessor = () => {
     {
       stepStartTime = Date.now();
 
-      await updateProgress(generationId, GenerationStatus.REVIEWING_ARTICLE, 99);
+      await updateProgress(generationId, GenerationStatus.REVIEWING_ARTICLE, calcProgress(7, 0));
       await addLog(generationId, 'info', '🔍 Starting article review and polish...');
 
       // Get decrypted API keys
@@ -1121,6 +1136,8 @@ export const startQueueProcessor = () => {
         let reviewPassed = false;
 
         for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+          // Update progress within Step 7 (86-100%)
+          await updateProgress(generationId, GenerationStatus.REVIEWING_ARTICLE, calcProgress(7, (iteration - 1) / MAX_ITERATIONS));
           await addLog(generationId, 'info', `🔍 Review iteration ${iteration}/${MAX_ITERATIONS}...`);
 
           const review = await openRouterForReview.comprehensiveReview(
@@ -1145,7 +1162,7 @@ export const startQueueProcessor = () => {
             await addLog(generationId, 'info', `  Links: ${review.linkCountCheck.actual}/${review.linkCountCheck.expected} ${review.linkCountCheck.passed ? '✅' : '❌'}`);
           }
           await addLog(generationId, 'info', `  Link quality: ${review.linkQualityCheck.passed ? '✅' : `❌ (${review.linkQualityCheck.issues.length} issues)`}`);
-          await addLog(generationId, 'info', `  Keyword density: ${review.keywordDensityCheck.density}% ${review.keywordDensityCheck.passed ? '✅' : '❌'}`);
+          await addLog(generationId, 'info', `  Main keyword: ${review.keywordDensityCheck.count}/5 occurrences ${review.keywordDensityCheck.passed ? '✅' : '❌'}`);
           await addLog(generationId, 'info', `  Rhythm/quality: ${review.rhythmCheck.passed ? '✅' : `❌ (${review.rhythmCheck.blocksToFix.length} blocks)`}`);
 
           if (review.passed) {
@@ -1310,7 +1327,7 @@ export const startQueueProcessor = () => {
           }
 
           // Fix keyword density (over-optimized blocks)
-          if (!review.keywordDensityCheck.passed && review.keywordDensityCheck.density > 3) {
+          if (!review.keywordDensityCheck.passed) {
             // Find blocks with highest keyword density
             const keyword = generation.config.mainKeyword.toLowerCase();
             const blocksWithDensity = reviewedBlocks
@@ -1337,11 +1354,11 @@ export const startQueueProcessor = () => {
                 originalUrls.push(match[2]);
               }
 
-              await addLog(generationId, 'thinking', `Reducing keyword density in Block #${block.id} (${block.keywordCount} occurrences)...`);
+              await addLog(generationId, 'thinking', `Reducing main keyword in Block #${block.id} (${block.keywordCount} occurrences)...`);
               const fixedContent = await openRouterForReview.fixBlockContent(
                 { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                [`Keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times — over-optimized. Replace some with synonyms or rephrase.`],
-                `Reduce keyword repetition by using synonyms, pronouns, or rephrasing. Keep 1-2 mentions natural.`,
+                [`Main keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times in this block — too many. Replace most occurrences with synonyms, pronouns, or rephrase entirely. Any remaining usage MUST be grammatically correct (proper case, declension, articles).`],
+                `Reduce keyword to max 1 occurrence per block. Use synonyms or rephrase. Never insert keywords as raw search terms or in quotes.`,
                 generation.config.language,
                 generation.config.articleType || 'informational',
                 generation.config.comment
@@ -1432,6 +1449,7 @@ export const startQueueProcessor = () => {
         }
 
         // Generate SEO metadata
+        await updateProgress(generationId, GenerationStatus.REVIEWING_ARTICLE, calcProgress(7, 0.9));
         await addLog(generationId, 'thinking', 'Generating SEO title and description...');
         const seoMetadata = await openRouterForReview.generateSeoMetadata(
           finalReviewedArticle,
