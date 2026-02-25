@@ -16,19 +16,12 @@ export enum GenerationStatus {
   ANALYZING_STRUCTURE = 'analyzing_structure',
   GENERATING_BLOCKS = 'generating_blocks',
   ENRICHING_BLOCKS = 'enriching_blocks',
-  ANSWERING_QUESTIONS = 'answering_questions', // Finding answers in Supabase
+  ANSWERING_QUESTIONS = 'answering_questions',
   WRITING_ARTICLE = 'writing_article',
-  INSERTING_LINKS = 'inserting_links', // Inserting internal links
-  REVIEWING_ARTICLE = 'reviewing_article', // Final article review and polish
+  INSERTING_LINKS = 'inserting_links',
+  REVIEWING_ARTICLE = 'reviewing_article',
   COMPLETED = 'completed',
   FAILED = 'failed',
-  // Paused states for continuation
-  PAUSED_AFTER_SERP = 'paused_after_serp',
-  PAUSED_AFTER_STRUCTURE = 'paused_after_structure',
-  PAUSED_AFTER_BLOCKS = 'paused_after_blocks',
-  PAUSED_AFTER_ANSWERS = 'paused_after_answers', // New pause state
-  PAUSED_AFTER_WRITING = 'paused_after_writing', // After article writing, before links
-  PAUSED_AFTER_REVIEW = 'paused_after_review', // After article review, before completion
 }
 
 /**
@@ -141,7 +134,8 @@ export interface GenerationConfig {
   internalLinks: InternalLink[];
   linksAsList: boolean;
   linksListPosition?: LinkPosition;
-  continuousMode?: boolean; // If true, skip all pauses and run full pipeline
+  minWords?: number;  // default 1200
+  maxWords?: number;  // default 1800
 }
 
 /**

@@ -65,13 +65,6 @@ export function getStatusColor(status: string): string {
     reviewing_article: 'bg-violet-500',
     completed: 'bg-green-500',
     failed: 'bg-red-500',
-    // Paused states
-    paused_after_serp: 'bg-amber-500',
-    paused_after_structure: 'bg-amber-500',
-    paused_after_blocks: 'bg-amber-500',
-    paused_after_answers: 'bg-amber-500',
-    paused_after_writing: 'bg-amber-500',
-    paused_after_review: 'bg-amber-500',
   };
   return colors[status] || 'bg-gray-500';
 }
@@ -93,27 +86,7 @@ export function getStatusLabel(status: string): string {
     reviewing_article: 'Reviewing Article',
     completed: 'Completed',
     failed: 'Failed',
-    // Paused states
-    paused_after_serp: 'Paused (SERP Done)',
-    paused_after_structure: 'Paused (Structure Done)',
-    paused_after_blocks: 'Paused (Blocks Done)',
-    paused_after_answers: 'Paused (Answers Done)',
-    paused_after_writing: 'Paused (Writing Done)',
-    paused_after_review: 'Paused (Review Done)',
   };
   return labels[status] || status;
 }
 
-/**
- * Check if generation is in a paused state
- */
-export function isPausedStatus(status: string): boolean {
-  return [
-    'paused_after_serp',
-    'paused_after_structure',
-    'paused_after_blocks',
-    'paused_after_answers',
-    'paused_after_writing',
-    'paused_after_review',
-  ].includes(status);
-}

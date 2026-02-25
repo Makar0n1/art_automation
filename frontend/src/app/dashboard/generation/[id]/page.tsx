@@ -16,7 +16,6 @@ import {
   Clock,
   FileText,
   Loader2,
-  Play,
   RotateCcw,
   List,
   ChevronDown,
@@ -39,7 +38,7 @@ import {
 import { generationsApi } from '@/lib/api';
 import { initSocket, subscribeToGeneration } from '@/lib/socket';
 import { ArticleBlock, Generation, GenerationLog, GenerationStatus } from '@/types';
-import { getStatusLabel, isPausedStatus, cn } from '@/lib/utils';
+import { getStatusLabel, cn } from '@/lib/utils';
 
 // Helper function to detect API-related errors
 const isApiKeyError = (error: string): { isApiError: boolean; service: string | null } => {
@@ -70,7 +69,6 @@ export default function GenerationPage() {
   const [logs, setLogs] = useState<GenerationLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCopied, setIsCopied] = useState(false);
-  const [isContinuing, setIsContinuing] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [isTitleCopied, setIsTitleCopied] = useState(false);
   const [isDescCopied, setIsDescCopied] = useState(false);
@@ -201,26 +199,6 @@ export default function GenerationPage() {
     }
   };
 
-  const handleContinue = async () => {
-    if (!generation) return;
-
-    setIsContinuing(true);
-    try {
-      const response = await generationsApi.continue(generationId);
-      if (response.success) {
-        toast.success('Generation continued');
-        // Update local state to show it's processing again
-        setGeneration((prev) =>
-          prev ? { ...prev, status: GenerationStatus.PROCESSING } : null
-        );
-      }
-    } catch (error) {
-      toast.error('Failed to continue generation');
-    } finally {
-      setIsContinuing(false);
-    }
-  };
-
   const handleRestart = async () => {
     if (!generation) return;
 
@@ -268,10 +246,7 @@ export default function GenerationPage() {
 
   const isActive =
     generation.status !== GenerationStatus.COMPLETED &&
-    generation.status !== GenerationStatus.FAILED &&
-    !isPausedStatus(generation.status);
-
-  const canContinue = isPausedStatus(generation.status);
+    generation.status !== GenerationStatus.FAILED;
 
   return (
     <div className="space-y-4">
@@ -294,8 +269,6 @@ export default function GenerationPage() {
                     ? 'success'
                     : generation.status === GenerationStatus.FAILED
                     ? 'error'
-                    : canContinue
-                    ? 'warning'
                     : 'info'
                 }
               >
@@ -322,17 +295,6 @@ export default function GenerationPage() {
           >
             <Settings className="h-4 w-4" />
           </Button>
-          {canContinue && (
-            <Button
-              variant="primary"
-              size="sm"
-              leftIcon={isContinuing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              onClick={handleContinue}
-              disabled={isContinuing}
-            >
-              {isContinuing ? 'Continuing...' : 'Continue'}
-            </Button>
-          )}
           {(generation.status === GenerationStatus.FAILED || generation.status === GenerationStatus.COMPLETED) && (
             <Button
               variant="secondary"
@@ -351,7 +313,7 @@ export default function GenerationPage() {
       {isConfigExpanded && (
         <Card className="border-gray-200 dark:border-gray-700">
           <CardContent className="py-3">
-            <div className="grid gap-3 md:grid-cols-4 text-sm">
+            <div className="grid gap-3 md:grid-cols-3 text-sm">
               <div>
                 <span className="text-gray-500 dark:text-gray-400">Type</span>
                 <p className="font-medium text-gray-900 dark:text-white capitalize">
@@ -368,12 +330,6 @@ export default function GenerationPage() {
                 <span className="text-gray-500 dark:text-gray-400">Region</span>
                 <p className="font-medium text-gray-900 dark:text-white uppercase">
                   {generation.config.region}
-                </p>
-              </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Mode</span>
-                <p className="font-medium text-gray-900 dark:text-white">
-                  {generation.config.continuousMode ? 'Continuous' : 'Step-by-step'}
                 </p>
               </div>
               {generation.config.keywords?.length > 0 && (

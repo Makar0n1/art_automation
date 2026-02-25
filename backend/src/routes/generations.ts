@@ -10,7 +10,6 @@ import {
   deleteGeneration,
   getQueueStatistics,
   getAllGenerations,
-  continueGenerationHandler,
   restartGenerationHandler,
 } from '../controllers/generationsController.js';
 import { authenticate } from '../middleware/auth.js';
@@ -43,12 +42,6 @@ router.get('/:id', getGeneration);
  * Get generation logs
  */
 router.get('/:id/logs', getGenerationLogs);
-
-/**
- * POST /api/generations/:id/continue
- * Continue generation from paused state
- */
-router.post('/:id/continue', continueGenerationHandler);
 
 /**
  * POST /api/generations/:id/restart

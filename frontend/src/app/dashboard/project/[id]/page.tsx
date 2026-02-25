@@ -48,7 +48,8 @@ const generationSchema = z.object({
   region: z.string(),
   lsiKeywords: z.string().optional(),
   comment: z.string().optional(),
-  continuousMode: z.boolean(),
+  minWords: z.number().min(500).max(5000),
+  maxWords: z.number().min(700).max(8000),
   linksAsList: z.boolean(),
   linksListPosition: z.string().optional(),
   internalLinks: z.array(z.object({
@@ -137,7 +138,8 @@ export default function ProjectPage() {
       articleType: 'informational',
       language: 'en',
       region: 'us',
-      continuousMode: true,
+      minWords: 1200,
+      maxWords: 1800,
       linksAsList: false,
       internalLinks: [],
     },
@@ -223,7 +225,8 @@ export default function ProjectPage() {
         region: data.region,
         lsiKeywords: data.lsiKeywords?.split(',').map((k) => k.trim()).filter(Boolean) || [],
         comment: data.comment,
-        continuousMode: data.continuousMode,
+        minWords: data.minWords,
+        maxWords: data.maxWords,
         internalLinks: data.internalLinks,
         linksAsList: data.linksAsList,
         linksListPosition: data.linksListPosition,
@@ -467,21 +470,29 @@ export default function ProjectPage() {
               {...register('comment')}
             />
 
-            <label className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50">
-              <input
-                type="checkbox"
-                className="rounded border-gray-300 h-5 w-5"
-                {...register('continuousMode')}
-              />
-              <div>
-                <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  Continuous Mode
-                </span>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Run full pipeline without pauses (SERP → Structure → Questions → Writing → Review → Done)
-                </p>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Word Count Range
+              </label>
+              <div className="flex items-center gap-3">
+                <Input
+                  type="number"
+                  placeholder="Min"
+                  error={errors.minWords?.message}
+                  {...register('minWords', { valueAsNumber: true })}
+                  className="w-28"
+                />
+                <span className="text-gray-400">—</span>
+                <Input
+                  type="number"
+                  placeholder="Max"
+                  error={errors.maxWords?.message}
+                  {...register('maxWords', { valueAsNumber: true })}
+                  className="w-28"
+                />
+                <span className="text-xs text-gray-500 dark:text-gray-400">words</span>
               </div>
-            </label>
+            </div>
           </div>
 
           {/* Internal Links */}

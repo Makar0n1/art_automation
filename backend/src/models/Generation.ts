@@ -61,13 +61,14 @@ const GenerationConfigSchema = new Schema({
   },
   lsiKeywords: [{ type: String, trim: true }],
   comment: { type: String, trim: true },
-  continuousMode: { type: Boolean, default: false },
   internalLinks: [InternalLinkSchema],
   linksAsList: { type: Boolean, default: false },
   linksListPosition: {
     type: String,
     enum: Object.values(LinkPosition),
   },
+  minWords: { type: Number, default: 1200 },
+  maxWords: { type: Number, default: 1800 },
 }, { _id: false });
 
 /**

@@ -268,6 +268,171 @@ export class SupabaseService {
   }
 
   /**
+   * Split text into chunks at paragraph/sentence boundaries
+   */
+  chunkText(text: string, maxChars: number = 2000): string[] {
+    // Split on double newlines (paragraphs)
+    const paragraphs = text.split(/\n\n+/).filter(p => p.trim().length > 0);
+    const chunks: string[] = [];
+
+    for (const paragraph of paragraphs) {
+      const trimmed = paragraph.trim();
+      if (trimmed.length <= maxChars) {
+        if (trimmed.length >= 50) {
+          chunks.push(trimmed);
+        }
+        continue;
+      }
+
+      // Paragraph too long — split at sentence boundaries
+      const sentences = trimmed.split(/(?<=[.!?])\s+/);
+      let currentChunk = '';
+      for (const sentence of sentences) {
+        if ((currentChunk + ' ' + sentence).length > maxChars && currentChunk.length > 0) {
+          if (currentChunk.trim().length >= 50) {
+            chunks.push(currentChunk.trim());
+          }
+          currentChunk = sentence;
+        } else {
+          currentChunk = currentChunk ? currentChunk + ' ' + sentence : sentence;
+        }
+      }
+      if (currentChunk.trim().length >= 50) {
+        chunks.push(currentChunk.trim());
+      }
+    }
+
+    return chunks;
+  }
+
+  /**
+   * Store text chunks with embeddings in Supabase DataBaseChunks table
+   */
+  async storeChunks(chunks: Array<{ content: string; metadata: { URL: string } }>): Promise<number> {
+    let storedCount = 0;
+
+    for (const chunk of chunks) {
+      try {
+        const embedding = await this.generateEmbedding(chunk.content);
+
+        await axios.post(
+          `${this.supabaseUrl}/rest/v1/DataBaseChunks`,
+          {
+            content: chunk.content,
+            metadata: chunk.metadata,
+            embedding: embedding,
+          },
+          {
+            headers: {
+              'apikey': this.supabaseKey,
+              'Authorization': `Bearer ${this.supabaseKey}`,
+              'Content-Type': 'application/json',
+              'Prefer': 'return=minimal',
+            },
+            timeout: 30000,
+          }
+        );
+
+        storedCount++;
+
+        // 300ms delay to avoid rate limits on embedding API
+        await new Promise(resolve => setTimeout(resolve, 300));
+      } catch (error) {
+        logger.warn(`Failed to store chunk (${chunk.content.substring(0, 50)}...):`, { error: error instanceof Error ? error.message : 'Unknown' });
+      }
+    }
+
+    return storedCount;
+  }
+
+  /**
+   * Find answer with web fallback: if Supabase has no answer, search web,
+   * scrape pages, chunk & store in Supabase, then retry search.
+   */
+  async findAnswerWithWebFallback(
+    question: string,
+    firecrawlService: { searchKeyword: (q: string, region: string, language: string, limit: number) => Promise<Array<{ url: string; title: string }>>; scrapeUrl: (url: string) => Promise<{ success: boolean; data?: { markdown?: string } }> },
+    language: string,
+    region: string
+  ): Promise<AnsweredQuestion | null> {
+    try {
+      // Phase 1: Try Supabase directly
+      const directAnswer = await this.findAnswer(question);
+      if (directAnswer) return directAnswer;
+
+      // Phase 2: Web fallback — search for the question
+      logger.info(`Web fallback for: "${question.substring(0, 60)}..."`);
+
+      let searchResults: Array<{ url: string; title: string }>;
+      try {
+        searchResults = await firecrawlService.searchKeyword(question, region, language, 6);
+      } catch (searchError) {
+        logger.warn(`Firecrawl search failed for question: ${question.substring(0, 50)}`, { error: searchError instanceof Error ? searchError.message : 'Unknown' });
+        return null;
+      }
+
+      if (searchResults.length === 0) return null;
+
+      // Batch 1: results 1-3
+      const batch1 = searchResults.slice(0, 3);
+      for (const result of batch1) {
+        try {
+          const scrapeResult = await firecrawlService.scrapeUrl(result.url);
+          if (scrapeResult.success && scrapeResult.data?.markdown) {
+            const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
+            if (chunks.length > 0) {
+              const stored = await this.storeChunks(
+                chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
+              );
+              logger.debug(`Stored ${stored} chunks from ${result.url}`);
+            }
+          }
+
+          // 1s delay between scrape calls
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (scrapeError) {
+          logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
+        }
+      }
+
+      // Retry search after batch 1
+      const retryAnswer1 = await this.findAnswer(question);
+      if (retryAnswer1) return retryAnswer1;
+
+      // Batch 2: results 4-6
+      const batch2 = searchResults.slice(3, 6);
+      for (const result of batch2) {
+        try {
+          const scrapeResult = await firecrawlService.scrapeUrl(result.url);
+          if (scrapeResult.success && scrapeResult.data?.markdown) {
+            const chunks = this.chunkText(scrapeResult.data.markdown, 2000);
+            if (chunks.length > 0) {
+              const stored = await this.storeChunks(
+                chunks.map(c => ({ content: c, metadata: { URL: result.url } }))
+              );
+              logger.debug(`Stored ${stored} chunks from ${result.url}`);
+            }
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (scrapeError) {
+          logger.warn(`Failed to scrape ${result.url}:`, { error: scrapeError instanceof Error ? scrapeError.message : 'Unknown' });
+        }
+      }
+
+      // Retry search after batch 2
+      const retryAnswer2 = await this.findAnswer(question);
+      if (retryAnswer2) return retryAnswer2;
+
+      // Phase 3: No answer found
+      return null;
+    } catch (error) {
+      logger.error(`findAnswerWithWebFallback failed for: "${question.substring(0, 50)}"`, { error: error instanceof Error ? error.message : 'Unknown' });
+      return null;
+    }
+  }
+
+  /**
    * Test connection to Supabase
    */
   async testConnection(): Promise<boolean> {

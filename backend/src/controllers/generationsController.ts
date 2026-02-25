@@ -8,7 +8,7 @@ import { Response } from 'express';
 import { Generation, Project, User } from '../models/index.js';
 import { AuthenticatedRequest, ApiResponse, GenerationStatus } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { queueGeneration, getQueueStats, continueGeneration } from '../queues/generationQueue.js';
+import { queueGeneration, getQueueStats } from '../queues/generationQueue.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -30,10 +30,11 @@ export const createGeneration = async (
       region,
       lsiKeywords,
       comment,
-      continuousMode,
       internalLinks,
       linksAsList,
       linksListPosition,
+      minWords,
+      maxWords,
     } = req.body;
 
     if (!userId) {
@@ -68,10 +69,11 @@ export const createGeneration = async (
         region: region || 'us',
         lsiKeywords: lsiKeywords || [],
         comment,
-        continuousMode: continuousMode || false,
         internalLinks: internalLinks || [],
         linksAsList: linksAsList || false,
         linksListPosition,
+        minWords: Math.max(500, Math.min(5000, Number(minWords) || 1200)),
+        maxWords: Math.max(700, Math.min(8000, Number(maxWords) || 1800)),
       },
       status: GenerationStatus.QUEUED,
       progress: 0,
@@ -348,68 +350,6 @@ export const getAllGenerations = async (
 };
 
 /**
- * Continue generation from paused state
- * POST /api/generations/:id/continue
- */
-export const continueGenerationHandler = async (
-  req: AuthenticatedRequest,
-  res: Response<ApiResponse>
-) => {
-  try {
-    const userId = req.user?.userId;
-    const { id } = req.params;
-
-    if (!userId) {
-      throw new AppError('User not found', 404);
-    }
-
-    // Verify generation exists and belongs to user
-    const generation = await Generation.findOne({ _id: id, userId });
-    if (!generation) {
-      throw new AppError('Generation not found', 404);
-    }
-
-    // Check if generation is in a paused state
-    const pausedStates = [
-      GenerationStatus.PAUSED_AFTER_SERP,
-      GenerationStatus.PAUSED_AFTER_STRUCTURE,
-      GenerationStatus.PAUSED_AFTER_BLOCKS,
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ];
-
-    if (!pausedStates.includes(generation.status as GenerationStatus)) {
-      throw new AppError(
-        `Cannot continue: generation is in "${generation.status}" state. Only paused generations can be continued.`,
-        400
-      );
-    }
-
-    // Continue generation
-    await continueGeneration(id, userId);
-
-    logger.info(`Generation continued: ${id} from ${generation.status}`);
-
-    res.json({
-      success: true,
-      message: `Generation continued from ${generation.status.replace('paused_after_', '')} step`,
-      data: {
-        id: generation._id,
-        previousStatus: generation.status,
-      },
-    });
-  } catch (error) {
-    if (error instanceof AppError) {
-      res.status(error.statusCode).json({ success: false, error: error.message });
-    } else {
-      logger.error('Continue generation error', { error });
-      res.status(500).json({ success: false, error: 'Failed to continue generation' });
-    }
-  }
-};
-
-/**
  * Restart a failed or completed generation from scratch
  * Clears all intermediate data and starts fresh
  */
@@ -432,12 +372,6 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
     const restartableStates = [
       GenerationStatus.FAILED,
       GenerationStatus.COMPLETED,
-      GenerationStatus.PAUSED_AFTER_SERP,
-      GenerationStatus.PAUSED_AFTER_STRUCTURE,
-      GenerationStatus.PAUSED_AFTER_BLOCKS,
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
     ];
 
     if (!restartableStates.includes(generation.status as GenerationStatus)) {

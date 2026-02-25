@@ -16,13 +16,6 @@ export enum GenerationStatus {
   REVIEWING_ARTICLE = 'reviewing_article',
   COMPLETED = 'completed',
   FAILED = 'failed',
-  // Paused states for continuation
-  PAUSED_AFTER_SERP = 'paused_after_serp',
-  PAUSED_AFTER_STRUCTURE = 'paused_after_structure',
-  PAUSED_AFTER_BLOCKS = 'paused_after_blocks',
-  PAUSED_AFTER_ANSWERS = 'paused_after_answers',
-  PAUSED_AFTER_WRITING = 'paused_after_writing',
-  PAUSED_AFTER_REVIEW = 'paused_after_review',
 }
 
 export enum ArticleType {
@@ -119,7 +112,8 @@ export interface GenerationConfig {
   internalLinks: InternalLink[];
   linksAsList: boolean;
   linksListPosition?: LinkPosition;
-  continuousMode?: boolean; // If true, skip all pauses and run full pipeline
+  minWords?: number;
+  maxWords?: number;
 }
 
 export interface GenerationLog {

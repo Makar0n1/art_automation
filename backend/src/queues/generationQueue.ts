@@ -83,7 +83,6 @@ export const setWorkerMode = () => {
 interface GenerationJobData {
   generationId: string;
   userId: string;
-  continueFrom?: GenerationStatus; // For continue feature
 }
 
 /**
@@ -207,9 +206,9 @@ export const startQueueProcessor = () => {
   logger.info('🔧 Registering Bull queue processor...');
 
   generationQueue.process(config.queue.maxConcurrentGenerations, async (job) => {
-    const { generationId, userId, continueFrom } = job.data;
+    const { generationId, userId } = job.data;
 
-  logger.info(`Processing generation ${generationId}`, { continueFrom });
+  logger.info(`Processing generation ${generationId}`);
 
   // Timer helper - formats milliseconds to human readable string
   const formatDuration = (ms: number): string => {
@@ -251,54 +250,10 @@ export const startQueueProcessor = () => {
       firecrawlKeyPreview: user.apiKeys?.firecrawl?.apiKey?.substring(0, 30),
     });
 
-    // Check if continuous mode is enabled (skip all pauses)
-    const continuousMode = generation.config.continuousMode === true;
-    if (continuousMode && !continueFrom) {
-      logger.info(`Continuous mode enabled for generation ${generationId}`);
-    }
-
-    // Determine which step to start from
-    const skipSerp = continueFrom && [
-      GenerationStatus.PAUSED_AFTER_SERP,
-      GenerationStatus.PAUSED_AFTER_STRUCTURE,
-      GenerationStatus.PAUSED_AFTER_BLOCKS,
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ].includes(continueFrom);
-
-    const skipStructure = continueFrom && [
-      GenerationStatus.PAUSED_AFTER_STRUCTURE,
-      GenerationStatus.PAUSED_AFTER_BLOCKS,
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ].includes(continueFrom);
-
-    const skipBlocks = continueFrom && [
-      GenerationStatus.PAUSED_AFTER_BLOCKS,
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ].includes(continueFrom);
-
-    const skipAnswers = continueFrom && [
-      GenerationStatus.PAUSED_AFTER_ANSWERS,
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ].includes(continueFrom);
-
-    const skipWriting = continueFrom && [
-      GenerationStatus.PAUSED_AFTER_WRITING,
-      GenerationStatus.PAUSED_AFTER_REVIEW,
-    ].includes(continueFrom);
-
-    const skipReview = continueFrom === GenerationStatus.PAUSED_AFTER_REVIEW;
-
     // ========================================
     // STEP 1: SERP Parsing
     // ========================================
-    if (!skipSerp) {
+    {
       stepStartTime = Date.now();
 
       // Get decrypted API keys
@@ -395,22 +350,13 @@ export const startQueueProcessor = () => {
       const serpDuration = Date.now() - stepStartTime;
       await addLog(generationId, 'info', `⏱️ SERP parsing took ${formatDuration(serpDuration)}`);
 
-      // Pause point after SERP (skip if continuous mode)
-      if (!continuousMode) {
-        await updateProgress(generationId, GenerationStatus.PAUSED_AFTER_SERP, 50);
-        await Generation.findByIdAndUpdate(generationId, {
-          currentStep: 'serp_completed',
-        });
-        await addLog(generationId, 'info', '⏸️ SERP parsing completed. Ready for structure analysis.');
-        return { success: true, generationId, pausedAt: 'serp' };
-      }
       await addLog(generationId, 'info', '✅ SERP parsing completed. Continuing to structure analysis...');
     }
 
     // ========================================
     // STEP 2: Structure Analysis
     // ========================================
-    if (!skipStructure) {
+    {
       stepStartTime = Date.now();
 
       // Get decrypted API keys
@@ -442,7 +388,9 @@ export const startQueueProcessor = () => {
           freshGeneration.config.keywords || [],
           freshGeneration.config.lsiKeywords || [],
           freshGeneration.config.articleType || 'informational',
-          freshGeneration.config.comment
+          freshGeneration.config.comment,
+          freshGeneration.config.minWords || 1200,
+          freshGeneration.config.maxWords || 1800
         );
 
         await updateProgress(generationId, GenerationStatus.ANALYZING_STRUCTURE, 65);
@@ -489,22 +437,13 @@ export const startQueueProcessor = () => {
       totalTokens += structureTokens.totalTokens;
       await addLog(generationId, 'info', `⏱️ Structure analysis took ${formatDuration(structureDuration)} | 🎯 ${structureTokens.totalTokens.toLocaleString()} tokens`);
 
-      // Pause point after structure analysis (skip if continuous mode)
-      if (!continuousMode) {
-        await updateProgress(generationId, GenerationStatus.PAUSED_AFTER_STRUCTURE, 70);
-        await Generation.findByIdAndUpdate(generationId, {
-          currentStep: 'structure_completed',
-        });
-        await addLog(generationId, 'info', '⏸️ Structure analysis completed. Ready for block enrichment.');
-        return { success: true, generationId, pausedAt: 'structure' };
-      }
       await addLog(generationId, 'info', '✅ Structure analysis completed. Continuing to block enrichment...');
     }
 
     // ========================================
     // STEP 3: Block Enrichment
     // ========================================
-    if (!skipBlocks) {
+    {
       stepStartTime = Date.now();
 
       // Get decrypted API keys
@@ -574,22 +513,13 @@ export const startQueueProcessor = () => {
       totalTokens += blocksTokens.totalTokens;
       await addLog(generationId, 'info', `⏱️ Block enrichment took ${formatDuration(blocksDuration)} | 🎯 ${blocksTokens.totalTokens.toLocaleString()} tokens`);
 
-      // Pause point after blocks enrichment (skip if continuous mode)
-      if (!continuousMode) {
-        await updateProgress(generationId, GenerationStatus.PAUSED_AFTER_BLOCKS, 88);
-        await Generation.findByIdAndUpdate(generationId, {
-          currentStep: 'blocks_completed',
-        });
-        await addLog(generationId, 'info', '⏸️ Block enrichment completed. Ready for question answering.');
-        return { success: true, generationId, pausedAt: 'blocks' };
-      }
       await addLog(generationId, 'info', '✅ Block enrichment completed. Continuing to question answering...');
     }
 
     // ========================================
-    // STEP 4: Question Answering from Supabase
-    // ========================================
-    if (!skipAnswers) {
+    // STEP 4: Question Answering from Supabase (with web fallback)
+    // ===========================================================
+    {
       stepStartTime = Date.now();
 
       // Get decrypted API keys
@@ -620,6 +550,12 @@ export const startQueueProcessor = () => {
         apiKeys.openRouter
       );
 
+      // Create FirecrawlService for web fallback (if Firecrawl key available)
+      let firecrawlForSearch: FirecrawlService | null = null;
+      if (apiKeys.firecrawl) {
+        firecrawlForSearch = new FirecrawlService(apiKeys.firecrawl);
+      }
+
       try {
         // Test connection first
         const isConnected = await supabase.testConnection();
@@ -632,6 +568,7 @@ export const startQueueProcessor = () => {
         const updatedBlocks: ArticleBlock[] = [];
         let totalQuestions = 0;
         let answeredCount = 0;
+        let webSearchCount = 0;
 
         // Count total questions first
         for (const block of freshGeneration.articleBlocks) {
@@ -641,6 +578,8 @@ export const startQueueProcessor = () => {
         }
 
         await addLog(generationId, 'info', `📋 Found ${totalQuestions} research questions across all blocks`);
+
+        let processedQuestions = 0;
 
         // Process each block
         for (const block of freshGeneration.articleBlocks) {
@@ -659,25 +598,48 @@ export const startQueueProcessor = () => {
 
           for (const question of blockData.questions) {
             try {
-              const answer = await supabase.findAnswer(question);
+              // Phase 1: Try Supabase directly
+              let answer = await supabase.findAnswer(question);
 
               if (answer) {
                 answeredQuestions.push(answer);
                 answeredCount++;
                 await addLog(generationId, 'info', `✅ Found answer for: "${question.substring(0, 50)}..."`, {
                   similarity: Math.round(answer.similarity * 100) + '%',
-                  source: answer.source,
                 });
+              } else if (firecrawlForSearch) {
+                // Phase 2: Web fallback — search, scrape, store, retry
+                await addLog(generationId, 'thinking', `🌐 Searching web for: "${question.substring(0, 50)}..."`);
+
+                answer = await supabase.findAnswerWithWebFallback(
+                  question,
+                  firecrawlForSearch,
+                  freshGeneration.config.language,
+                  freshGeneration.config.region
+                );
+
+                if (answer) {
+                  answeredQuestions.push(answer);
+                  answeredCount++;
+                  webSearchCount++;
+                  await addLog(generationId, 'info', `✅ Found answer via web search for: "${question.substring(0, 50)}..."`, {
+                    similarity: Math.round(answer.similarity * 100) + '%',
+                  });
+                } else {
+                  await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
+                }
               } else {
                 await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
               }
 
               // Update progress
-              const progressPercent = Math.round(90 + (answeredCount / totalQuestions) * 5);
+              processedQuestions++;
+              const progressPercent = Math.round(90 + (processedQuestions / totalQuestions) * 5);
               await updateProgress(generationId, GenerationStatus.ANSWERING_QUESTIONS, Math.min(progressPercent, 95));
 
             } catch (error) {
               await addLog(generationId, 'warn', `⚠️ Error searching for answer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+              processedQuestions++;
             }
 
             // Small delay to avoid rate limiting
@@ -685,23 +647,20 @@ export const startQueueProcessor = () => {
           }
 
           // Update block with answered questions (remove unanswered ones)
-          // Explicitly construct plain object to avoid Mongoose serialization issues
+          // Do NOT include source — AI should rephrase naturally without attribution
           const updatedBlock: ArticleBlock = {
             id: blockData.id,
             type: blockData.type,
             heading: blockData.heading,
             instruction: blockData.instruction,
             lsi: [...(blockData.lsi || [])],
-            // Only keep questions that have answers
             questions: answeredQuestions.length > 0
               ? answeredQuestions.map(aq => aq.question)
               : undefined,
-            // Store answered Q&A pairs
             answeredQuestions: answeredQuestions.length > 0
               ? answeredQuestions.map(aq => ({
                   question: aq.question,
                   answer: aq.answer,
-                  source: aq.source,
                   similarity: aq.similarity,
                 }))
               : undefined,
@@ -723,13 +682,7 @@ export const startQueueProcessor = () => {
         // Final emission of blocks
         emitBlocks(generationId, updatedBlocks);
 
-        await addLog(generationId, 'info', `🎯 Question answering complete!`, {
-          totalQuestions,
-          answeredQuestions: answeredCount,
-          unansweredRemoved: totalQuestions - answeredCount,
-        });
-
-        await addLog(generationId, 'thinking', `Found answers for ${answeredCount} out of ${totalQuestions} questions. Unanswered questions were removed from blocks.`);
+        await addLog(generationId, 'info', `🎯 Question answering complete! Found ${answeredCount}/${totalQuestions} answers (${webSearchCount} from web search)`);
 
       } catch (error) {
         await addLog(generationId, 'error', `❌ Question answering failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -740,22 +693,13 @@ export const startQueueProcessor = () => {
       const answersDuration = Date.now() - stepStartTime;
       await addLog(generationId, 'info', `⏱️ Question answering took ${formatDuration(answersDuration)}`);
 
-      // Pause point after question answering (skip if continuous mode)
-      if (!continuousMode) {
-        await updateProgress(generationId, GenerationStatus.PAUSED_AFTER_ANSWERS, 96);
-        await Generation.findByIdAndUpdate(generationId, {
-          currentStep: 'answers_completed',
-        });
-        await addLog(generationId, 'info', '⏸️ Question answering completed. Ready for article writing.');
-        return { success: true, generationId, pausedAt: 'answers' };
-      }
       await addLog(generationId, 'info', '✅ Question answering completed. Continuing to article writing...');
     }
 
     // ========================================
     // STEP 5: Article Writing (Block by Block)
     // ========================================
-    if (!skipWriting) {
+    {
     stepStartTime = Date.now();
 
     // Get decrypted API keys
@@ -779,9 +723,11 @@ export const startQueueProcessor = () => {
 
     const openRouter = new OpenRouterService(apiKeys.openRouter);
     const totalBlocks = freshGeneration.articleBlocks.length;
-    const targetWordCount = freshGeneration.averageWordCount || 2000;
+    const configMinWords = freshGeneration.config.minWords || 1200;
+    const configMaxWords = freshGeneration.config.maxWords || 1800;
+    const targetWordCount = Math.round((configMinWords + configMaxWords) / 2);
 
-    await addLog(generationId, 'info', `📊 Writing ${totalBlocks} blocks. Target: ~${targetWordCount} words`);
+    await addLog(generationId, 'info', `📊 Writing ${totalBlocks} blocks. Target: ${configMinWords}-${configMaxWords} words (~${targetWordCount} avg)`);
 
     try {
       // Accumulated article content for context
@@ -927,22 +873,13 @@ export const startQueueProcessor = () => {
       totalTokens += writingTokens.totalTokens;
       await addLog(generationId, 'info', `⏱️ Article writing took ${formatDuration(writingDuration)} | 🎯 ${writingTokens.totalTokens.toLocaleString()} tokens`);
 
-      // Pause point after writing (skip if continuous mode)
-      if (!continuousMode) {
-        await updateProgress(generationId, GenerationStatus.PAUSED_AFTER_WRITING, 97);
-        await Generation.findByIdAndUpdate(generationId, {
-          currentStep: 'writing_completed',
-        });
-        await addLog(generationId, 'info', '⏸️ Article writing completed. Ready for link insertion and review.');
-        return { success: true, generationId, pausedAt: 'writing' };
-      }
       await addLog(generationId, 'info', '✅ Article writing completed. Continuing to link insertion...');
 
     } catch (error) {
       await addLog(generationId, 'error', `❌ Article writing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       throw error;
     }
-    } // End of if (!skipWriting)
+    }
 
     // ========================================
     // STEP 6: Internal Link Insertion
@@ -963,7 +900,7 @@ export const startQueueProcessor = () => {
 
     if (internalLinks.length > 0) {
       await updateProgress(generationId, GenerationStatus.INSERTING_LINKS, 99);
-      await addLog(generationId, 'info', `🔗 Starting internal link insertion (${internalLinks.length} links)...`);
+      await addLog(generationId, 'info', `🔗 Starting internal link insertion (${internalLinks.length} links, 1 link = 1 AI call)...`);
 
       try {
         // Reload generation to get latest blocks
@@ -979,8 +916,8 @@ export const startQueueProcessor = () => {
         openRouterForLinks = new OpenRouterService(apiKeysForLinks.openRouter);
         const blocksForLinks = genForLinks.articleBlocks as ArticleBlock[];
 
-        // Step 6.1: Ask AI to select which blocks should get which links
-        await addLog(generationId, 'thinking', 'Analyzing article structure to find best placement for each link...');
+        // Step 6.1: Select which blocks should get which links (deterministic)
+        await addLog(generationId, 'thinking', 'Selecting best block placement for each link...');
 
         const blockSelections = await openRouterForLinks.selectBlocksForLinks(
           blocksForLinks.map(b => ({
@@ -999,32 +936,9 @@ export const startQueueProcessor = () => {
           generation.config.language
         );
 
-        await addLog(generationId, 'info', `📍 Selected blocks for links: ${blockSelections.map(s => `Link ${s.linkIndex + 1} → Block #${s.blockId}`).join(', ')}`);
+        await addLog(generationId, 'info', `📍 Block assignments: ${blockSelections.map(s => `Link ${s.linkIndex + 1} → Block #${s.blockId}`).join(', ')}`);
 
-        // Step 6.2: Group links by block and insert
-        // Group selections by blockId
-        const linksByBlock = new Map<number, Array<{
-          url: string;
-          anchor: string;
-          displayType: 'inline' | 'list_end' | 'list_start' | 'sidebar';
-        }>>();
-
-        for (const selection of blockSelections) {
-          const link = internalLinks[selection.linkIndex];
-          const blockId = selection.blockId;
-
-          if (!linksByBlock.has(blockId)) {
-            linksByBlock.set(blockId, []);
-          }
-
-          linksByBlock.get(blockId)!.push({
-            url: link.url,
-            anchor: selection.finalAnchor, // Already computed: URL for anchorless, provided anchor otherwise
-            displayType: link.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar',
-          });
-        }
-
-        // Process each block with its links
+        // Step 6.2: Process links ONE AT A TIME
         // Convert to plain objects to avoid Mongoose sub-document issues
         const updatedBlocksWithLinks = blocksForLinks.map(b => ({
           id: b.id,
@@ -1037,72 +951,67 @@ export const startQueueProcessor = () => {
           content: b.content || '',
         }));
 
-        for (const [blockId, linksForBlock] of linksByBlock) {
-          const blockIndex = updatedBlocksWithLinks.findIndex(b => b.id === blockId);
+        let insertedCount = 0;
+
+        for (const selection of blockSelections) {
+          const originalLink = internalLinks[selection.linkIndex];
+          const blockIndex = updatedBlocksWithLinks.findIndex(b => b.id === selection.blockId);
 
           if (blockIndex === -1) {
-            await addLog(generationId, 'warn', `Block #${blockId} not found`);
+            await addLog(generationId, 'warn', `Block #${selection.blockId} not found for link ${selection.linkIndex + 1}`);
             continue;
           }
 
           const block = updatedBlocksWithLinks[blockIndex];
           if (!block.content) {
-            await addLog(generationId, 'warn', `Block #${blockId} has no content`);
+            await addLog(generationId, 'warn', `Block #${selection.blockId} has no content for link ${selection.linkIndex + 1}`);
             continue;
           }
 
-          await addLog(generationId, 'thinking', `Inserting ${linksForBlock.length} link(s) into Block #${block.id} "${block.heading}"...`);
+          const linkInfo = {
+            url: originalLink.url,
+            anchor: selection.finalAnchor,
+            isAnchorless: originalLink.isAnchorless,
+            displayType: originalLink.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar',
+          };
 
-          // Log each link being inserted
-          for (const link of linksForBlock) {
-            await addLog(generationId, 'debug', `  → [${link.anchor}](${link.url}) (${link.displayType})`);
-          }
+          await addLog(generationId, 'thinking', `Inserting link ${selection.linkIndex + 1}/${internalLinks.length}: [${linkInfo.anchor}](${linkInfo.url}) → Block #${block.id} "${block.heading}" (${linkInfo.displayType})...`);
 
-          // Insert all links for this block at once
-          const updatedContent = await openRouterForLinks.insertLinksIntoBlock(
+          // Insert SINGLE link via AI
+          const updatedContent = await openRouterForLinks.insertSingleLink(
             block.content,
             block.heading,
-            linksForBlock,
+            linkInfo,
             generation.config.language
           );
 
-          // Update block with new content (plain object, not Mongoose)
-          updatedBlocksWithLinks[blockIndex] = {
-            ...block,
-            content: updatedContent,
-          };
+          // Verify URL is present in updated content
+          const urlVariants = [
+            linkInfo.url,
+            linkInfo.url.endsWith('/') ? linkInfo.url.slice(0, -1) : linkInfo.url + '/',
+          ];
+          const urlPresent = urlVariants.some(url => updatedContent.includes(url));
 
-          // Verify the link was actually inserted
-          const urlsToCheck = linksForBlock.map(l => l.url);
-          const missingUrls = urlsToCheck.filter(url => {
-            const urlWithoutSlash = url.endsWith('/') ? url.slice(0, -1) : url;
-            const urlWithSlash = url.endsWith('/') ? url : url + '/';
-            return !updatedContent.includes(urlWithoutSlash) && !updatedContent.includes(urlWithSlash);
-          });
-
-          if (missingUrls.length > 0) {
-            await addLog(generationId, 'warn', `⚠️ ${missingUrls.length} URL(s) missing after AI insertion, force-appending...`);
-            // Force append missing links
-            let contentWithForced = updatedContent;
-            for (const link of linksForBlock) {
-              const urlWithoutSlash = link.url.endsWith('/') ? link.url.slice(0, -1) : link.url;
-              const urlWithSlash = link.url.endsWith('/') ? link.url : link.url + '/';
-              if (!contentWithForced.includes(urlWithoutSlash) && !contentWithForced.includes(urlWithSlash)) {
-                const linkMd = `[${link.anchor}](${link.url})`;
-                contentWithForced += `\n\n${linkMd}`;
-                await addLog(generationId, 'debug', `  Force-appended: ${linkMd}`);
-              }
-            }
-            updatedBlocksWithLinks[blockIndex].content = contentWithForced;
+          if (urlPresent) {
+            updatedBlocksWithLinks[blockIndex] = { ...block, content: updatedContent };
+            insertedCount++;
+            await addLog(generationId, 'info', `✅ Link ${selection.linkIndex + 1} inserted into Block #${block.id}`);
+          } else {
+            // This shouldn't happen since insertSingleLink force-appends, but just in case
+            await addLog(generationId, 'warn', `⚠️ Link ${selection.linkIndex + 1} URL missing after insertion, using fallback`);
+            const linkMd = `[${linkInfo.anchor}](${linkInfo.url})`;
+            updatedBlocksWithLinks[blockIndex] = {
+              ...block,
+              content: block.content + `\n\n${linkMd}`,
+            };
+            insertedCount++;
           }
 
-          await addLog(generationId, 'info', `✅ ${linksForBlock.length} link(s) inserted into Block #${block.id}`);
-
-          // Small delay between blocks
+          // Small delay between AI calls
           await new Promise(resolve => setTimeout(resolve, 300));
         }
 
-        // Rebuild final article with links (strip any duplicate headings)
+        // Rebuild final article with links
         let finalArticleWithLinks = '';
         for (const block of updatedBlocksWithLinks) {
           const cleanContent = stripLeadingHeading(block.content || '');
@@ -1119,21 +1028,19 @@ export const startQueueProcessor = () => {
           }
         }
 
-        // Final verification: check all link URLs are in final article
+        // Final verification: count all configured link URLs in the article
         const allLinkUrls = internalLinks.map(l => l.url);
-        const missingInFinal = allLinkUrls.filter(url => {
+        const presentInFinal = allLinkUrls.filter(url => {
           const urlWithoutSlash = url.endsWith('/') ? url.slice(0, -1) : url;
           const urlWithSlash = url.endsWith('/') ? url : url + '/';
-          return !finalArticleWithLinks.includes(urlWithoutSlash) && !finalArticleWithLinks.includes(urlWithSlash);
+          return finalArticleWithLinks.includes(urlWithoutSlash) || finalArticleWithLinks.includes(urlWithSlash);
         });
 
-        if (missingInFinal.length > 0) {
-          await addLog(generationId, 'warn', `⚠️ FINAL CHECK: ${missingInFinal.length} URL(s) still missing from article!`);
-          for (const url of missingInFinal) {
-            await addLog(generationId, 'debug', `  Missing URL: ${url}`);
-          }
+        if (presentInFinal.length === allLinkUrls.length) {
+          await addLog(generationId, 'info', `✓ Final check: all ${allLinkUrls.length}/${allLinkUrls.length} links present in article`);
         } else {
-          await addLog(generationId, 'debug', `✓ Final check passed: all ${allLinkUrls.length} URLs present in article`);
+          const missingUrls = allLinkUrls.filter(url => !presentInFinal.includes(url));
+          await addLog(generationId, 'warn', `⚠️ Final check: ${presentInFinal.length}/${allLinkUrls.length} links present. Missing: ${missingUrls.join(', ')}`);
         }
 
         // Save updated article and blocks
@@ -1145,7 +1052,7 @@ export const startQueueProcessor = () => {
         // Emit updated blocks to frontend
         emitBlocks(generationId, updatedBlocksWithLinks);
 
-        await addLog(generationId, 'info', `🎉 Link insertion complete! ${internalLinks.length} links inserted.`);
+        await addLog(generationId, 'info', `🎉 Link insertion complete! ${insertedCount}/${internalLinks.length} links inserted.`);
 
       } catch (linkError) {
         // Log error but don't fail the entire generation
@@ -1169,7 +1076,7 @@ export const startQueueProcessor = () => {
     // ========================================
     // STEP 7: Article Review & SEO Metadata
     // ========================================
-    if (!skipReview) {
+    {
       stepStartTime = Date.now();
 
       await updateProgress(generationId, GenerationStatus.REVIEWING_ARTICLE, 99);
@@ -1190,39 +1097,6 @@ export const startQueueProcessor = () => {
       const blocksForReview = (genForReview?.articleBlocks || []) as ArticleBlock[];
 
       try {
-        // Step 7.1: Review article quality
-        await addLog(generationId, 'thinking', 'Analyzing article for rhythm, repetitions, filler content, anomalies...');
-
-        const reviewIssues = await openRouterForReview.reviewArticleQuality(
-          blocksForReview.map(b => ({
-            id: b.id,
-            type: b.type as 'h1' | 'intro' | 'h2' | 'h3' | 'conclusion' | 'faq',
-            heading: b.heading,
-            content: b.content,
-          })),
-          generation.config.language,
-          generation.config.articleType || 'informational',
-          generation.config.comment
-        );
-
-        // Step 7.2: Determine blocks to fix (always improve at least 2-3 blocks)
-        let blocksToFix = reviewIssues;
-        if (blocksToFix.length < 2) {
-          await addLog(generationId, 'info', 'Article looks good! Adding general improvements...');
-          const additionalImprovements = openRouterForReview.generateImprovementTasks(
-            blocksForReview.map(b => ({
-              id: b.id,
-              type: b.type,
-              heading: b.heading,
-              content: b.content,
-            })),
-            3 - blocksToFix.length
-          );
-          blocksToFix = [...blocksToFix, ...additionalImprovements];
-        }
-
-        await addLog(generationId, 'info', `📝 Improving ${blocksToFix.length} blocks...`);
-
         // Convert to plain objects for modification
         const reviewedBlocks = blocksForReview.map(b => ({
           id: b.id,
@@ -1235,56 +1109,312 @@ export const startQueueProcessor = () => {
           content: b.content || '',
         }));
 
-        // Step 7.3: Fix each problematic block
-        for (const issue of blocksToFix) {
-          const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
-          if (blockIndex === -1) continue;
+        const configMinWords = generation.config.minWords || 1200;
+        const configMaxWords = generation.config.maxWords || 1800;
+        const configuredLinks = (generation.config.internalLinks || []).map(l => ({
+          url: l.url,
+          anchor: l.anchor,
+        }));
 
-          const block = reviewedBlocks[blockIndex];
-          if (!block.content) continue;
+        // Iterative review loop — max 3 iterations
+        const MAX_ITERATIONS = 3;
+        let reviewPassed = false;
 
-          await addLog(generationId, 'thinking', `Improving Block #${block.id} "${block.heading}"...`);
-          await addLog(generationId, 'debug', `  Issues: ${issue.issues.join(', ')}`);
+        for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
+          await addLog(generationId, 'info', `🔍 Review iteration ${iteration}/${MAX_ITERATIONS}...`);
 
-          // Extract URLs from original content to verify later
-          const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
-          const originalUrls: string[] = [];
-          let match;
-          while ((match = urlRegex.exec(block.content)) !== null) {
-            originalUrls.push(match[2]);
-          }
-
-          // Fix the block
-          const fixedContent = await openRouterForReview.fixBlockContent(
-            { id: block.id, type: block.type, heading: block.heading, content: block.content },
-            issue.issues,
-            issue.suggestion,
+          const review = await openRouterForReview.comprehensiveReview(
+            reviewedBlocks.map(b => ({
+              id: b.id,
+              type: b.type as 'h1' | 'intro' | 'h2' | 'h3' | 'conclusion' | 'faq',
+              heading: b.heading,
+              content: b.content,
+            })),
+            configuredLinks,
+            configMinWords,
+            configMaxWords,
+            generation.config.mainKeyword,
             generation.config.language,
             generation.config.articleType || 'informational',
             generation.config.comment
           );
 
-          // Verify links preserved
-          const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
-          let finalContent = fixedContent;
+          // Log check results
+          await addLog(generationId, 'info', `  Word count: ${review.wordCountCheck.actual} words (${review.wordCountCheck.min}-${review.wordCountCheck.max}) ${review.wordCountCheck.passed ? '✅' : '❌'}`);
+          if (configuredLinks.length > 0) {
+            await addLog(generationId, 'info', `  Links: ${review.linkCountCheck.actual}/${review.linkCountCheck.expected} ${review.linkCountCheck.passed ? '✅' : '❌'}`);
+          }
+          await addLog(generationId, 'info', `  Link quality: ${review.linkQualityCheck.passed ? '✅' : `❌ (${review.linkQualityCheck.issues.length} issues)`}`);
+          await addLog(generationId, 'info', `  Keyword density: ${review.keywordDensityCheck.density}% ${review.keywordDensityCheck.passed ? '✅' : '❌'}`);
+          await addLog(generationId, 'info', `  Rhythm/quality: ${review.rhythmCheck.passed ? '✅' : `❌ (${review.rhythmCheck.blocksToFix.length} blocks)`}`);
 
-          if (missingUrls.length > 0) {
-            await addLog(generationId, 'warn', `⚠️ ${missingUrls.length} link(s) lost during fix, restoring...`);
-            // Find the original link markdown and append
-            for (const url of missingUrls) {
-              const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
-              if (linkMatch) {
-                finalContent += `\n\n${linkMatch[0]}`;
-                await addLog(generationId, 'debug', `  Restored: ${linkMatch[0]}`);
+          if (review.passed) {
+            await addLog(generationId, 'info', `✅ All quality checks passed on iteration ${iteration}!`);
+            reviewPassed = true;
+            break;
+          }
+
+          await addLog(generationId, 'info', `📝 Fixing issues (iteration ${iteration})...`);
+
+          // Fix word count issues
+          if (!review.wordCountCheck.passed) {
+            const actual = review.wordCountCheck.actual;
+            const target = Math.round((configMinWords + configMaxWords) / 2);
+
+            if (actual < configMinWords) {
+              // Article too short — expand the longest content blocks
+              const contentBlocks = reviewedBlocks
+                .filter(b => b.type === 'h2' || b.type === 'h3')
+                .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
+
+              const wordsNeeded = configMinWords - actual;
+              const blocksToExpand = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
+              const extraWordsPerBlock = Math.ceil(wordsNeeded / blocksToExpand.length);
+
+              for (const block of blocksToExpand) {
+                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+                if (blockIndex === -1 || !block.content) continue;
+
+                await addLog(generationId, 'thinking', `Expanding Block #${block.id} by ~${extraWordsPerBlock} words...`);
+                const fixedContent = await openRouterForReview.fixBlockContent(
+                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                  [`Content too short. Add approximately ${extraWordsPerBlock} more words of substantive content.`],
+                  `Expand with more details, examples, or explanations. Target: ~${target} total article words.`,
+                  generation.config.language,
+                  generation.config.articleType || 'informational',
+                  generation.config.comment
+                );
+                reviewedBlocks[blockIndex].content = fixedContent;
+              }
+            } else if (actual > configMaxWords) {
+              // Article too long — trim the longest content blocks
+              const contentBlocks = reviewedBlocks
+                .filter(b => b.type === 'h2' || b.type === 'h3')
+                .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0));
+
+              const wordsToRemove = actual - configMaxWords;
+              const blocksToTrim = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
+              const trimPerBlock = Math.ceil(wordsToRemove / blocksToTrim.length);
+
+              for (const block of blocksToTrim) {
+                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+                if (blockIndex === -1 || !block.content) continue;
+
+                // Extract URLs before fixing
+                const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+                const originalUrls: string[] = [];
+                let match;
+                while ((match = urlRegex.exec(block.content)) !== null) {
+                  originalUrls.push(match[2]);
+                }
+
+                await addLog(generationId, 'thinking', `Trimming Block #${block.id} by ~${trimPerBlock} words...`);
+                const fixedContent = await openRouterForReview.fixBlockContent(
+                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                  [`Content too long. Remove approximately ${trimPerBlock} words. Cut filler, redundancy, verbose phrases.`],
+                  `Make more concise. Remove padding and redundancy. Keep all links intact.`,
+                  generation.config.language,
+                  generation.config.articleType || 'informational',
+                  generation.config.comment
+                );
+
+                // Restore missing links
+                let finalContent = fixedContent;
+                const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
+                if (missingUrls.length > 0) {
+                  for (const url of missingUrls) {
+                    const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+                    if (linkMatch) {
+                      finalContent += `\n\n${linkMatch[0]}`;
+                    }
+                  }
+                }
+                reviewedBlocks[blockIndex].content = finalContent;
               }
             }
           }
 
-          reviewedBlocks[blockIndex].content = finalContent;
-          await addLog(generationId, 'info', `✅ Block #${block.id} improved`);
+          // Fix missing links (re-insert)
+          if (!review.linkCountCheck.passed && review.linkCountCheck.missingUrls.length > 0) {
+            await addLog(generationId, 'thinking', `Re-inserting ${review.linkCountCheck.missingUrls.length} missing link(s)...`);
+            for (const missingUrl of review.linkCountCheck.missingUrls) {
+              const linkConfig = (generation.config.internalLinks || []).find(l => l.url === missingUrl);
+              if (!linkConfig) continue;
+
+              // Find a suitable block
+              const suitableBlocks = reviewedBlocks.filter(b =>
+                b.type === 'h2' || b.type === 'h3' || b.type === 'intro' || b.type === 'conclusion'
+              ).filter(b => b.content && !b.content.includes(missingUrl));
+
+              if (suitableBlocks.length > 0) {
+                const targetBlock = suitableBlocks[0];
+                const blockIndex = reviewedBlocks.findIndex(b => b.id === targetBlock.id);
+                const anchor = linkConfig.isAnchorless ? linkConfig.url : (linkConfig.anchor || linkConfig.url);
+
+                const updatedContent = await openRouterForReview.insertSingleLink(
+                  targetBlock.content,
+                  targetBlock.heading,
+                  {
+                    url: linkConfig.url,
+                    anchor,
+                    isAnchorless: linkConfig.isAnchorless,
+                    displayType: linkConfig.displayType as 'inline' | 'list_end' | 'list_start' | 'sidebar',
+                  },
+                  generation.config.language
+                );
+                reviewedBlocks[blockIndex].content = updatedContent;
+                await addLog(generationId, 'info', `  Re-inserted: ${linkConfig.url} → Block #${targetBlock.id}`);
+              }
+            }
+          }
+
+          // Fix link quality issues
+          if (!review.linkQualityCheck.passed) {
+            for (const issue of review.linkQualityCheck.issues) {
+              const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
+              if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
+
+              const block = reviewedBlocks[blockIndex];
+
+              // Extract URLs before fixing
+              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+              const originalUrls: string[] = [];
+              let match;
+              while ((match = urlRegex.exec(block.content)) !== null) {
+                originalUrls.push(match[2]);
+              }
+
+              await addLog(generationId, 'thinking', `Fixing link quality in Block #${block.id}: ${issue.issue}`);
+              const fixedContent = await openRouterForReview.fixBlockContent(
+                { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                [issue.issue],
+                'Remove quotes around links. Make link anchors flow naturally in the sentence. No "See also:" unless sidebar type.',
+                generation.config.language,
+                generation.config.articleType || 'informational',
+                generation.config.comment
+              );
+
+              // Restore missing links
+              let finalContent = fixedContent;
+              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
+              if (missingUrls.length > 0) {
+                for (const url of missingUrls) {
+                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+                  if (linkMatch) {
+                    finalContent += `\n\n${linkMatch[0]}`;
+                  }
+                }
+              }
+              reviewedBlocks[blockIndex].content = finalContent;
+            }
+          }
+
+          // Fix keyword density (over-optimized blocks)
+          if (!review.keywordDensityCheck.passed && review.keywordDensityCheck.density > 3) {
+            // Find blocks with highest keyword density
+            const keyword = generation.config.mainKeyword.toLowerCase();
+            const blocksWithDensity = reviewedBlocks
+              .filter(b => b.content && b.type !== 'h1')
+              .map(b => {
+                const text = b.content.toLowerCase();
+                let count = 0;
+                let idx = 0;
+                while ((idx = text.indexOf(keyword, idx)) !== -1) { count++; idx += keyword.length; }
+                return { ...b, keywordCount: count };
+              })
+              .filter(b => b.keywordCount > 1)
+              .sort((a, b) => b.keywordCount - a.keywordCount);
+
+            for (const block of blocksWithDensity.slice(0, 2)) {
+              const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+              if (blockIndex === -1) continue;
+
+              // Extract URLs before fixing
+              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+              const originalUrls: string[] = [];
+              let match;
+              while ((match = urlRegex.exec(block.content)) !== null) {
+                originalUrls.push(match[2]);
+              }
+
+              await addLog(generationId, 'thinking', `Reducing keyword density in Block #${block.id} (${block.keywordCount} occurrences)...`);
+              const fixedContent = await openRouterForReview.fixBlockContent(
+                { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                [`Keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times — over-optimized. Replace some with synonyms or rephrase.`],
+                `Reduce keyword repetition by using synonyms, pronouns, or rephrasing. Keep 1-2 mentions natural.`,
+                generation.config.language,
+                generation.config.articleType || 'informational',
+                generation.config.comment
+              );
+
+              let finalContent = fixedContent;
+              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
+              if (missingUrls.length > 0) {
+                for (const url of missingUrls) {
+                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+                  if (linkMatch) {
+                    finalContent += `\n\n${linkMatch[0]}`;
+                  }
+                }
+              }
+              reviewedBlocks[blockIndex].content = finalContent;
+            }
+          }
+
+          // Fix rhythm issues
+          if (!review.rhythmCheck.passed) {
+            for (const issue of review.rhythmCheck.blocksToFix) {
+              const blockIndex = reviewedBlocks.findIndex(b => b.id === issue.blockId);
+              if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
+
+              const block = reviewedBlocks[blockIndex];
+
+              // Extract URLs before fixing
+              const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+              const originalUrls: string[] = [];
+              let match;
+              while ((match = urlRegex.exec(block.content)) !== null) {
+                originalUrls.push(match[2]);
+              }
+
+              await addLog(generationId, 'thinking', `Fixing rhythm in Block #${block.id}: ${issue.issues.join(', ')}`);
+              const fixedContent = await openRouterForReview.fixBlockContent(
+                { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                issue.issues,
+                issue.suggestion,
+                generation.config.language,
+                generation.config.articleType || 'informational',
+                generation.config.comment
+              );
+
+              let finalContent = fixedContent;
+              const missingUrls = originalUrls.filter(url => !fixedContent.includes(url));
+              if (missingUrls.length > 0) {
+                for (const url of missingUrls) {
+                  const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
+                  if (linkMatch) {
+                    finalContent += `\n\n${linkMatch[0]}`;
+                  }
+                }
+              }
+              reviewedBlocks[blockIndex].content = finalContent;
+            }
+          }
+
+          // Save progress after each iteration
+          await Generation.findByIdAndUpdate(generationId, {
+            articleBlocks: reviewedBlocks,
+          });
+          emitBlocks(generationId, reviewedBlocks);
+
+          await addLog(generationId, 'info', `✅ Iteration ${iteration} fixes applied.`);
         }
 
-        // Step 7.4: Assemble final article (strip any duplicate headings)
+        if (!reviewPassed) {
+          await addLog(generationId, 'warn', `⚠️ Article did not pass all checks after ${MAX_ITERATIONS} iterations. Proceeding with best result.`);
+        }
+
+        // Assemble final article
         let finalReviewedArticle = '';
         for (const block of reviewedBlocks) {
           const cleanContent = stripLeadingHeading(block.content || '');
@@ -1301,7 +1431,7 @@ export const startQueueProcessor = () => {
           }
         }
 
-        // Step 7.5: Generate SEO metadata
+        // Generate SEO metadata
         await addLog(generationId, 'thinking', 'Generating SEO title and description...');
         const seoMetadata = await openRouterForReview.generateSeoMetadata(
           finalReviewedArticle,
@@ -1314,7 +1444,7 @@ export const startQueueProcessor = () => {
         await addLog(generationId, 'info', `📊 SEO Title: "${seoMetadata.title}"`);
         await addLog(generationId, 'info', `📊 SEO Description: "${seoMetadata.description.substring(0, 50)}..."`);
 
-        // Save results
+        // Save final results
         await Generation.findByIdAndUpdate(generationId, {
           article: finalReviewedArticle,
           articleBlocks: reviewedBlocks,
@@ -1322,7 +1452,7 @@ export const startQueueProcessor = () => {
           seoDescription: seoMetadata.description,
         });
 
-        // Emit updated blocks and SEO to frontend
+        // Emit updated blocks
         emitBlocks(generationId, reviewedBlocks);
 
         // Log step duration and token usage
@@ -1333,14 +1463,6 @@ export const startQueueProcessor = () => {
         totalTokens += reviewTokens.totalTokens;
         await addLog(generationId, 'info', `⏱️ Article review took ${formatDuration(reviewDuration)} | 🎯 ${reviewTokens.totalTokens.toLocaleString()} tokens`);
 
-        // Pause point after review (skip if continuous mode)
-        if (!continuousMode) {
-          await Generation.findByIdAndUpdate(generationId, {
-            status: GenerationStatus.PAUSED_AFTER_REVIEW,
-          });
-          await addLog(generationId, 'info', '⏸️ Article review completed. Check SEO metadata and final article.');
-          return { success: true, generationId, pausedAt: 'review' };
-        }
         await addLog(generationId, 'info', '✅ Article review completed. Finalizing...');
 
       } catch (reviewError) {
@@ -1441,55 +1563,3 @@ export const getQueueStats = async () => {
   return { waiting, active, completed, failed };
 };
 
-/**
- * Continue generation from paused state
- */
-export const continueGeneration = async (
-  generationId: string,
-  userId: string
-): Promise<Bull.Job<GenerationJobData> | null> => {
-  // Get current generation state
-  const generation = await Generation.findById(generationId);
-  if (!generation) {
-    throw new Error('Generation not found');
-  }
-
-  // Check if generation is in a paused state
-  const pausedStates = [
-    GenerationStatus.PAUSED_AFTER_SERP,
-    GenerationStatus.PAUSED_AFTER_STRUCTURE,
-    GenerationStatus.PAUSED_AFTER_BLOCKS,
-    GenerationStatus.PAUSED_AFTER_ANSWERS,
-    GenerationStatus.PAUSED_AFTER_WRITING,
-    GenerationStatus.PAUSED_AFTER_REVIEW,
-  ];
-
-  if (!pausedStates.includes(generation.status as GenerationStatus)) {
-    throw new Error(`Cannot continue: generation is in ${generation.status} state`);
-  }
-
-  // Add to queue with continue flag
-  const job = await generationQueue.add(
-    {
-      generationId,
-      userId,
-      continueFrom: generation.status as GenerationStatus,
-    },
-    { jobId: `${generationId}-continue-${Date.now()}` }
-  );
-
-  logger.info(`Continuing generation ${generationId} from ${generation.status}`);
-
-  // Add log about continuation
-  await Generation.findByIdAndUpdate(generationId, {
-    $push: {
-      logs: {
-        timestamp: new Date(),
-        level: 'info',
-        message: `▶️ Continuing generation from ${generation.status.replace('paused_after_', '')} step...`,
-      },
-    },
-  });
-
-  return job;
-};

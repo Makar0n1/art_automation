@@ -174,15 +174,24 @@ export class OpenRouterService {
     keywords: string[],
     lsiKeywords: string[],
     articleType: string = 'informational',
-    comment?: string
+    comment?: string,
+    minWords: number = 1200,
+    maxWords: number = 1800
   ): Promise<StructureAnalysis> {
-    // Calculate average word count
+    // Calculate average word count from competitors (for reference)
     const wordCounts = serpResults
       .filter(r => r.wordCount && r.wordCount > 0)
       .map(r => r.wordCount!);
-    const averageWordCount = wordCounts.length > 0
+    const competitorAvgWordCount = wordCounts.length > 0
       ? Math.round(wordCounts.reduce((a, b) => a + b, 0) / wordCounts.length)
       : 2000;
+
+    // Use user's target word count (midpoint) as the working average
+    const targetWordCount = Math.round((minWords + maxWords) / 2);
+    const averageWordCount = targetWordCount;
+
+    // Calculate target blocks based on word count: ceil(target/220), clamp 5-12
+    const targetBlocks = Math.max(5, Math.min(12, Math.ceil(targetWordCount / 220)));
 
     // Prepare competitor structures for analysis
     const structuresText = serpResults
@@ -253,20 +262,25 @@ ${structuresText}
 Additional keywords to incorporate: ${keywords.join(', ')}
 LSI keywords: ${lsiKeywords.join(', ')}
 Target language: ${langName}
-Average competitor word count: ${averageWordCount}
+Average competitor word count: ${competitorAvgWordCount}
+Target word count range: ${minWords}-${maxWords} words
 Article type: ${articleType}${comment ? `\n\nAUTHOR'S INSTRUCTIONS:\n${comment}` : ''}
 
-CRITICAL H1 ANALYSIS TASK:
-1. Examine ALL competitor H1 titles from above
-2. Identify what makes them strong or weak
-3. Create a COMPETITIVE H1 that:
-   - Is MORE specific, compelling, or comprehensive than competitors
-   - Includes main keyword "${mainKeyword}" naturally
-   - Is 50-70 characters for SEO
-   - Stands out and makes users want to click
-   - Example patterns: "Ultimate Guide", "Complete Tutorial", "Expert Tips", specific numbers, unique angles
+COMPETITOR H1 TITLES (analyze these carefully):
+${serpResults.map((r, i) => `${i + 1}. "${r.title}"`).join('\n')}
 
-TARGET: Create a focused 1500-2000 word article (6-9 content blocks, NO bloat or filler).
+CRITICAL H1 ANALYSIS TASK:
+1. Analyze the patterns in competitor titles above (numbers, "guide", year, questions, emotional hooks, authority words)
+2. Find the angle ALL competitors MISS
+3. Create a 100% UNIQUE H1 title that:
+   - Takes a DIFFERENT angle than ALL competitors above
+   - Includes main keyword "${mainKeyword}" naturally
+   - Is 40-65 characters for optimal SERP display
+   - Uses ONE proven pattern: specific number, unique benefit, curiosity gap, or authority signal
+   - Makes the user CHOOSE this article over every competitor
+   - MUST NOT be a copy or slight variation of any competitor title
+
+TARGET: Create a focused ${minWords}-${maxWords} word article (${targetBlocks} content blocks, NO bloat or filler).
 Create a comprehensive analysis and generate a unique, optimized article structure.
 
 Return ONLY valid JSON in this exact format:
@@ -319,21 +333,22 @@ IMPORTANT RULES:
 4. Second-to-last block must be Conclusion (no questions)
 5. Last block must be FAQ (no questions), MAX 4-5 Q&A pairs, short and concise
 6. Content blocks (h2, h3) should have "questions" array with 0-5 SIMPLE research questions
-7. CRITICAL: Include 6-9 content blocks total (NOT 10-15) for focused, high-quality coverage
+7. CRITICAL: Include ${targetBlocks} content blocks total for focused, high-quality coverage
    - Quality over quantity
    - Each block covers essential subtopics only
    - Avoid redundant or filler sections
 8. Each block should have 3-8 LSI keywords relevant to that section
-9. TARGET ARTICLE LENGTH: 1500-2000 words total (compact, focused, no bloat)
+9. TARGET ARTICLE LENGTH: ${minWords}-${maxWords} words total (compact, focused, no bloat)
 
 CRITICAL - Question Generation Rules:
-- Questions MUST be SHORT and SIMPLE (max 10 words)
-- Questions should ask about ONE specific thing, not multiple
-- Good examples: "What is X?", "How much does X cost?", "What are the types of X?", "How does X work?"
-- BAD examples: "What are the challenges and opportunities in X considering various factors?"
-- NOT every block needs questions - some blocks might have 0-2, others 3-5
-- Questions should help find FACTS: prices, definitions, statistics, names, dates
-- Avoid academic, philosophical, or multi-part questions`;
+- Each question MUST target a DIFFERENT factual aspect (definition, statistic, cost, process, example, name, date)
+- 0-5 questions per block: 0 for opinion/tips/advice blocks, 3-5 for fact-heavy blocks
+- Questions MUST be SEARCHABLE — match how facts are stored in databases
+- Every question seeks a CONCRETE FACT: a number, name, date, definition, price, or percentage
+- Max 12 words per question
+- Good: "What is the average cost of X?", "How many people use X?", "What year was X introduced?", "What are the main types of X?"
+- BAD: "What challenges arise when implementing X?", "How does X compare to Y in terms of various factors?"
+- Avoid academic, philosophical, opinion-seeking, or multi-part questions`;
 
     try {
       const response = await this.chat(systemPrompt, userPrompt, 0.7);
@@ -370,10 +385,21 @@ CRITICAL - Question Generation Rules:
         delete faqBlock.questions;
       }
 
-      // Ensure H1 block has no questions
+      // Ensure H1 block has no questions + clean up title
       const h1Block = analysis.recommendedStructure.find(b => b.type === 'h1');
       if (h1Block) {
         delete h1Block.questions;
+        // Post-processing: strip markdown formatting, quotes, clean up
+        let title = h1Block.heading;
+        title = title.replace(/^#+\s*/, ''); // Strip leading # markdown
+        title = title.replace(/^\*+|\*+$/g, ''); // Strip bold/italic markers
+        title = title.replace(/^["'"'«»]+|["'"'«»]+$/g, ''); // Strip quotes
+        title = title.trim();
+        // Truncate to 70 chars max
+        if (title.length > 70) {
+          title = title.substring(0, 67) + '...';
+        }
+        h1Block.heading = title;
       }
 
       logger.info('Structure analysis completed', {
@@ -460,13 +486,15 @@ For each block, provide:
 3. For content blocks (h2/h3 only): generate 0-5 SIMPLE research questions
 
 CRITICAL - Question Rules:
-- Questions MUST be SHORT (max 8-10 words)
-- Ask about ONE specific thing only
-- Good: "What is X?", "How much does X cost?", "What are types of X?"
-- BAD: "What challenges arise when implementing X in various contexts?"
-- NOT every block needs questions (some have 0, others have 3-5)
-- Questions should find FACTS: prices, definitions, stats, names
-- NO academic, multi-part, or philosophical questions
+- FIRST assess: does this block topic have researchable facts? If YES → 3-5 questions. If opinion/advice → 0-1 questions.
+- Each question targets a DIFFERENT factual aspect (definition, stat, cost, process, example, date)
+- Questions MUST be SEARCHABLE — written the way answers are stored in databases
+- Every question seeks a CONCRETE FACT: number, name, date, definition, price, percentage
+- Max 12 words per question, must end with ?
+- Questions must cover BREADTH of the subtopic, not depth of one aspect
+- Good: "What is X?", "How much does X cost?", "What percentage of users prefer X?", "When was X first introduced?"
+- BAD: "What challenges arise when implementing X?", "How can one improve X considering factors?"
+- NO academic, multi-part, opinion-seeking, or philosophical questions
 
 Return the enriched blocks as JSON array in the same format, with improved instructions and LSI.
 Keep the same structure but make instructions much more detailed and specific.
@@ -482,14 +510,26 @@ All text must be in ${langName}.`;
 
       const enrichedBlocks = JSON.parse(jsonMatch[0]) as ArticleBlock[];
 
-      // Validate and clean up blocks
-      return enrichedBlocks.map((block, idx) => ({
-        ...block,
-        id: idx,
-        questions: ['intro', 'conclusion', 'faq', 'h1'].includes(block.type)
-          ? undefined
-          : block.questions,
-      }));
+      // Validate and clean up blocks + post-process questions
+      return enrichedBlocks.map((block, idx) => {
+        let questions = block.questions;
+        // Strip invalid questions: >15 words or not ending with ?
+        if (questions && questions.length > 0) {
+          questions = questions.filter(q => {
+            const trimmed = q.trim();
+            if (!trimmed.endsWith('?')) return false;
+            if (trimmed.split(/\s+/).length > 15) return false;
+            return true;
+          });
+        }
+        return {
+          ...block,
+          id: idx,
+          questions: ['intro', 'conclusion', 'faq', 'h1'].includes(block.type)
+            ? undefined
+            : (questions && questions.length > 0 ? questions : undefined),
+        };
+      });
     } catch (error) {
       logger.error('Block enrichment failed', { error });
       // Return original blocks if enrichment fails
@@ -563,22 +603,31 @@ Do not add any content, just the title.`;
         break;
 
       case 'intro':
-        blockTypeInstructions = `Write an engaging introduction paragraph.
+        {
+          // Scale intro proportionally: ~8% of target word count
+          const introTarget = Math.round(targetWordCount * 0.08);
+          const introMin = Math.max(80, introTarget - 25);
+          const introMax = introTarget + 25;
+          estimatedWords = introTarget;
+          blockTypeInstructions = `Write an engaging introduction paragraph.
 - Hook the reader immediately
 - Introduce the topic and its importance
 - Preview what the article will cover
 - Include the main keyword naturally
-- 100-150 words (concise and focused)`;
-        estimatedWords = 125;
+- ${introMin}-${introMax} words (concise and focused)`;
+        }
         break;
 
       case 'h2':
       case 'h3':
-        // For 1500-2000 word articles with 6-9 content blocks
-        // Calculation: (1800 target - 400 for intro/conclusion/faq) / 7 blocks = ~200 words
-        const wordsPerBlock = Math.round((targetWordCount - 400) / 7);
-        estimatedWords = Math.max(150, Math.min(250, wordsPerBlock));
-        blockTypeInstructions = `Write focused, high-quality content for this section.
+        {
+          // Calculate words per content block dynamically
+          // Reserve ~15% for intro+conclusion+faq, rest split among content blocks
+          const reservedWords = Math.round(targetWordCount * 0.15);
+          const contentBlocks = Math.max(4, Math.ceil(targetWordCount / 220) - 3);
+          const wordsPerBlock = Math.round((targetWordCount - reservedWords) / contentBlocks);
+          estimatedWords = Math.max(120, Math.min(500, wordsPerBlock));
+          blockTypeInstructions = `Write focused, high-quality content for this section.
 - Start directly with the content (heading is already defined)
 - Use paragraphs, bullet lists, or numbered lists as appropriate
 - Include tables if data comparison is relevant
@@ -586,15 +635,22 @@ Do not add any content, just the title.`;
 - Use the LSI keywords naturally throughout
 - Every sentence must add value - no padding or repetition
 ${hasFactsFromResearch ? '- MUST include the verified facts provided above' : '- Write informatively but avoid specific statistics, research citations, or precise numbers you cannot verify'}`;
+        }
         break;
 
       case 'conclusion':
-        blockTypeInstructions = `Write a strong, concise conclusion.
+        {
+          // Scale conclusion: ~6% of target word count
+          const concTarget = Math.round(targetWordCount * 0.06);
+          const concMin = Math.max(60, concTarget - 20);
+          const concMax = concTarget + 20;
+          estimatedWords = concTarget;
+          blockTypeInstructions = `Write a strong, concise conclusion.
 - Summarize the key points covered
 - Reinforce the main message
 - End with a call to action or final thought
-- 80-120 words (brief and impactful)`;
-        estimatedWords = 100;
+- ${concMin}-${concMax} words (brief and impactful)`;
+        }
         break;
 
       case 'faq':
@@ -787,20 +843,21 @@ Write the content now:`;
   }
 
   /**
-   * Insert link(s) into block content
-   * AI adapts the text to naturally incorporate the links
-   * BUT anchor text is NEVER changed - use exactly as provided
+   * Insert a SINGLE link into block content
+   * Processes ONE link per AI call for maximum reliability
+   * Anchor text is NEVER changed - use exactly as provided
    *
-   * For anchorless links, anchor = URL (e.g. [https://url/](https://url/))
+   * For anchorless links, use URL as anchor in "Learn more at [url](url)" style
    */
-  async insertLinksIntoBlock(
+  async insertSingleLink(
     blockContent: string,
     blockHeading: string,
-    links: Array<{
+    link: {
       url: string;
       anchor: string; // EXACT anchor to use, never change
+      isAnchorless: boolean;
       displayType: 'inline' | 'list_end' | 'list_start' | 'sidebar';
-    }>,
+    },
     language: string
   ): Promise<string> {
     const languageNames: Record<string, string> = {
@@ -810,39 +867,41 @@ Write the content now:`;
     };
     const langName = languageNames[language] || 'English';
 
-    // Build links description
-    const linksDescription = links.map((link, i) => {
-      const linkMarkdown = `[${link.anchor}](${link.url})`;
-      let instruction = '';
+    const linkMarkdown = `[${link.anchor}](${link.url})`;
 
-      switch (link.displayType) {
-        case 'inline':
-          instruction = 'Insert INLINE - adapt a sentence to naturally include this link';
-          break;
-        case 'list_start':
-          instruction = 'Add at START - create 1-2 intro sentences with this link';
-          break;
-        case 'list_end':
-          instruction = 'Add at END - create 1-2 closing sentences with this link';
-          break;
-        case 'sidebar':
-          instruction = 'Add at END as: **Siehe auch:** ' + linkMarkdown;
-          break;
-      }
+    // Build display-type-specific instruction
+    let insertionInstruction = '';
+    switch (link.displayType) {
+      case 'inline':
+        if (link.isAnchorless) {
+          insertionInstruction = `Insert this link INLINE into the text. Find a natural place to add a phrase like "Learn more at ${linkMarkdown}" or "Details available at ${linkMarkdown}". The link must flow grammatically within or after an existing sentence. Do NOT use quotes around the link. Do NOT add "See also" or similar headings.`;
+        } else {
+          insertionInstruction = `Insert this link INLINE into the text. Rewrite ONE sentence to naturally incorporate the anchor text "${link.anchor}" as a clickable link: ${linkMarkdown}. The anchor must flow grammatically as part of the sentence — no quotes, no "See also", no keyword stuffing. Temperature: be conservative, change as little as possible.`;
+        }
+        break;
+      case 'list_start':
+        insertionInstruction = `Add 1-2 natural introductory sentences at the VERY START of the content that include this link: ${linkMarkdown}. The sentences should introduce the topic and naturally lead into the existing content.`;
+        break;
+      case 'list_end':
+        insertionInstruction = `Add 1-2 natural closing sentences at the VERY END of the content that include this link: ${linkMarkdown}. The sentences should summarize or extend the topic and include the link naturally.`;
+        break;
+      case 'sidebar':
+        insertionInstruction = `Append at the very end of the content:\n\n**See also:** ${linkMarkdown}\n\nDo NOT modify the existing content at all. Only add this one line at the end.`;
+        break;
+    }
 
-      return `${i + 1}. ${linkMarkdown}\n   Type: ${link.displayType}\n   Instruction: ${instruction}`;
-    }).join('\n\n');
-
-    const systemPrompt = `You are a markdown editor inserting internal links into content.
+    const systemPrompt = `You are a markdown editor inserting exactly ONE internal link into content.
 
 CRITICAL RULES:
-1. Use the EXACT link markdown provided - DO NOT change anchor text or URL
-2. The content is MARKDOWN - preserve ALL formatting (bold, lists, etc.)
-3. Adapt the text minimally to fit the links naturally
-4. Write in ${langName}
-5. Return ONLY the updated content, no explanations`;
+1. Use the EXACT link markdown: ${linkMarkdown}
+2. DO NOT change the anchor text or URL under any circumstances
+3. The content is MARKDOWN - preserve ALL existing formatting (bold, lists, links, etc.)
+4. Make MINIMAL changes to the text — only modify what's needed for the link to fit naturally
+5. Write in ${langName}
+6. Return ONLY the updated content, no explanations or commentary
+7. DO NOT wrap output in code blocks`;
 
-    const userPrompt = `Insert these links into the content:
+    const userPrompt = `Insert ONE link into this content:
 
 === BLOCK HEADING ===
 ${blockHeading}
@@ -850,97 +909,83 @@ ${blockHeading}
 === CURRENT CONTENT ===
 ${blockContent}
 
-=== LINKS TO INSERT (use EXACTLY as shown) ===
-${linksDescription}
+=== LINK TO INSERT ===
+${linkMarkdown}
+Display type: ${link.displayType}
 
-IMPORTANT:
-- Use the EXACT markdown links shown above
-- Do NOT change anchor text or URL
-- Adapt surrounding text if needed to make links fit naturally
-- Keep all existing markdown formatting
+=== INSTRUCTION ===
+${insertionInstruction}
 
-Return the updated content:`;
+Return the updated content with the link inserted:`;
 
     try {
-      const response = await this.chat(systemPrompt, userPrompt, 0.4);
+      const response = await this.chat(systemPrompt, userPrompt, 0.3);
 
       // Clean up response
       let updatedContent = response.trim();
       updatedContent = updatedContent.replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
 
-      // Verify all links were inserted - check for the full markdown link format
-      const missingLinks: typeof links = [];
-      for (const link of links) {
-        // Check for the exact markdown link format: [anchor](url)
-        const expectedLink = `[${link.anchor}](${link.url})`;
-        // Also check for URL with/without trailing slash
-        const urlVariants = [
-          link.url,
-          link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/',
-        ];
+      // Verify the link URL is present
+      const urlVariants = [
+        link.url,
+        link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/',
+      ];
 
-        const found = urlVariants.some(url => updatedContent.includes(url));
+      const urlFound = urlVariants.some(url => updatedContent.includes(url));
 
-        if (!found) {
-          logger.warn(`Link not found in AI response: ${expectedLink}`);
-          missingLinks.push(link);
+      if (!urlFound) {
+        logger.warn(`Link URL not found in AI response, force-appending: ${linkMarkdown}`);
+        // Force-append based on display type
+        if (link.displayType === 'list_start') {
+          updatedContent = `${linkMarkdown}\n\n${updatedContent}`;
+        } else if (link.displayType === 'sidebar') {
+          updatedContent += `\n\n**See also:** ${linkMarkdown}`;
         } else {
-          logger.debug(`Link verified in response: ${link.url}`);
-        }
-      }
-
-      // Force-append missing links
-      if (missingLinks.length > 0) {
-        logger.warn(`${missingLinks.length}/${links.length} links missing from AI response, force-appending`);
-        for (const link of missingLinks) {
-          const linkMarkdown = `[${link.anchor}](${link.url})`;
           updatedContent += `\n\n${linkMarkdown}`;
-          logger.info(`Force-appended: ${linkMarkdown}`);
         }
+      } else {
+        logger.debug(`Link verified in response: ${link.url}`);
       }
-
-      logger.debug(`Links insertion complete`, {
-        requested: links.length,
-        missing: missingLinks.length,
-        originalLength: blockContent.length,
-        newLength: updatedContent.length,
-      });
 
       return updatedContent;
     } catch (error) {
-      logger.error('Failed to insert links into block', { error });
-      // Fallback: append all links at the end
-      let fallback = blockContent;
-      for (const link of links) {
-        const linkMarkdown = `[${link.anchor}](${link.url})`;
-        fallback += `\n\n${linkMarkdown}`;
-        logger.info(`Fallback-appended: ${linkMarkdown}`);
+      logger.error(`Failed to insert single link into block "${blockHeading}"`, { error });
+      // Fallback: append link at the end
+      if (link.displayType === 'list_start') {
+        return `${linkMarkdown}\n\n${blockContent}`;
+      } else if (link.displayType === 'sidebar') {
+        return `${blockContent}\n\n**See also:** ${linkMarkdown}`;
       }
-      return fallback;
+      return `${blockContent}\n\n${linkMarkdown}`;
     }
   }
 
   /**
-   * Review article quality and identify blocks that need improvement
-   * Checks for: rhythm, filler content (water), repetitions, anomalies, hallucinations
-   *
-   * @returns Array of blocks with issues and suggestions for improvement
+   * Comprehensive article review with multiple quality checks
+   * Returns structured results for each check category
    */
-  async reviewArticleQuality(
+  async comprehensiveReview(
     blocks: Array<{
       id: number;
       type: 'h1' | 'intro' | 'h2' | 'h3' | 'conclusion' | 'faq';
       heading: string;
       content?: string;
     }>,
+    configuredLinks: Array<{ url: string; anchor?: string }>,
+    minWords: number,
+    maxWords: number,
+    mainKeyword: string,
     language: string,
     articleType: string = 'informational',
     comment?: string
-  ): Promise<Array<{
-    blockId: number;
-    issues: string[];
-    suggestion: string;
-  }>> {
+  ): Promise<{
+    passed: boolean;
+    wordCountCheck: { passed: boolean; actual: number; min: number; max: number };
+    linkCountCheck: { passed: boolean; actual: number; expected: number; missingUrls: string[] };
+    linkQualityCheck: { passed: boolean; issues: Array<{ blockId: number; issue: string }> };
+    keywordDensityCheck: { passed: boolean; density: number; issues: string[] };
+    rhythmCheck: { passed: boolean; blocksToFix: Array<{ blockId: number; issues: string[]; suggestion: string }> };
+  }> {
     const languageNames: Record<string, string> = {
       'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
       'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'uk': 'Ukrainian',
@@ -948,99 +993,169 @@ Return the updated content:`;
     };
     const langName = languageNames[language] || 'English';
 
-    // Build article representation with block IDs
-    const articleWithIds = blocks
-      .filter(b => b.content)
-      .map(b => `[BLOCK ${b.id}] ${b.type.toUpperCase()}: ${b.heading}\n${b.content}`)
-      .join('\n\n---\n\n');
+    // === CHECK 1: Word count ===
+    const fullText = blocks
+      .filter(b => b.content && b.type !== 'h1')
+      .map(b => b.content)
+      .join(' ');
+    const actualWordCount = fullText.split(/\s+/).filter(w => w.length > 0).length;
+    const wordCountCheck = {
+      passed: actualWordCount >= minWords && actualWordCount <= maxWords,
+      actual: actualWordCount,
+      min: minWords,
+      max: maxWords,
+    };
 
-    // Build type-specific check instructions
-    let typeCheckRules = '';
-    if (articleType === 'informational') {
-      typeCheckRules = `
-6. COMMERCIAL CONTAMINATION - if this is INFORMATIONAL article, flag ANY commercial content:
-   - Pricing mentions, cost comparisons
-   - Calls to buy/order/purchase
-   - Service promotions, selling language
-   - These MUST be flagged and removed!
-`;
-    } else if (articleType === 'commercial') {
-      typeCheckRules = `
-6. MISSING COMMERCIAL ELEMENTS - if this is COMMERCIAL article, note if:
-   - Pricing info is missing where expected
-   - No clear calls to action
-`;
+    // === CHECK 2: Link count ===
+    const articleText = blocks.map(b => b.content || '').join('\n');
+    const presentUrls = configuredLinks.filter(link => {
+      const urlVariants = [
+        link.url,
+        link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/',
+      ];
+      return urlVariants.some(url => articleText.includes(url));
+    });
+    const missingUrls = configuredLinks
+      .filter(link => {
+        const urlVariants = [
+          link.url,
+          link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/',
+        ];
+        return !urlVariants.some(url => articleText.includes(url));
+      })
+      .map(l => l.url);
+    const linkCountCheck = {
+      passed: presentUrls.length === configuredLinks.length,
+      actual: presentUrls.length,
+      expected: configuredLinks.length,
+      missingUrls,
+    };
+
+    // === CHECK 3: Link quality (check for unnatural phrasing around links) ===
+    const linkQualityIssues: Array<{ blockId: number; issue: string }> = [];
+    for (const block of blocks) {
+      if (!block.content) continue;
+      // Check for quoted links like "See also:", links in parentheses, or links surrounded by quotes
+      const linkRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
+      let linkMatch;
+      while ((linkMatch = linkRegex.exec(block.content)) !== null) {
+        const fullMatch = linkMatch[0];
+        const matchIndex = linkMatch.index;
+        const before = block.content.substring(Math.max(0, matchIndex - 30), matchIndex);
+
+        // Check for unnatural patterns
+        if (/["'«»]\s*$/.test(before) || /["'«»]/.test(block.content.substring(matchIndex + fullMatch.length, matchIndex + fullMatch.length + 5))) {
+          linkQualityIssues.push({ blockId: block.id, issue: `Link "${linkMatch[1]}" appears to be quoted unnaturally` });
+        }
+      }
     }
+    const linkQualityCheck = {
+      passed: linkQualityIssues.length === 0,
+      issues: linkQualityIssues,
+    };
 
-    // Build style check from comment
-    let styleCheckRules = '';
-    if (comment) {
-      styleCheckRules = `
-7. STYLE COMPLIANCE - check if content follows author's instructions:
-   "${comment}"
-   Flag blocks that violate these instructions.
-`;
+    // === CHECK 4: Keyword density ===
+    const keywordLower = mainKeyword.toLowerCase();
+    const textLower = fullText.toLowerCase();
+    const keywordWords = keywordLower.split(/\s+/).length;
+    let keywordCount = 0;
+    let searchIndex = 0;
+    while ((searchIndex = textLower.indexOf(keywordLower, searchIndex)) !== -1) {
+      keywordCount++;
+      searchIndex += keywordLower.length;
     }
+    const totalWords = actualWordCount;
+    const density = totalWords > 0 ? (keywordCount * keywordWords / totalWords) * 100 : 0;
+    const densityIssues: string[] = [];
+    if (density > 3) {
+      densityIssues.push(`Main keyword "${mainKeyword}" density is ${density.toFixed(1)}% (over 3% threshold — over-optimized)`);
+    } else if (density < 0.5 && totalWords > 300) {
+      densityIssues.push(`Main keyword "${mainKeyword}" density is ${density.toFixed(1)}% (under 0.5% — may be too low)`);
+    }
+    const keywordDensityCheck = {
+      passed: density <= 3 && (density >= 0.5 || totalWords <= 300),
+      density: Math.round(density * 10) / 10,
+      issues: densityIssues,
+    };
 
-    const systemPrompt = `You are a professional editor reviewing an article for quality issues.
-Your task is to identify blocks that need improvement and provide specific suggestions.
+    // === CHECK 5: Rhythm — AI-powered check for transitions, filler, repetitions ===
+    let rhythmBlocksToFix: Array<{ blockId: number; issues: string[]; suggestion: string }> = [];
+    try {
+      const articleWithIds = blocks
+        .filter(b => b.content && b.type !== 'h1')
+        .map(b => `[BLOCK ${b.id}] ${b.type.toUpperCase()}: ${b.heading}\n${b.content}`)
+        .join('\n\n---\n\n');
+
+      let typeCheckRules = '';
+      if (articleType === 'informational') {
+        typeCheckRules = '\n6. COMMERCIAL CONTAMINATION - flag ANY commercial content, pricing, selling language in INFORMATIONAL article';
+      } else if (articleType === 'commercial') {
+        typeCheckRules = '\n6. MISSING COMMERCIAL ELEMENTS - note if pricing/CTA is missing in COMMERCIAL article';
+      }
+
+      let styleCheckRules = '';
+      if (comment) {
+        styleCheckRules = `\n7. STYLE COMPLIANCE - check if content follows: "${comment}"`;
+      }
+
+      const systemPrompt = `You are a professional editor. Review article quality and identify blocks with REAL problems.
 
 Check for:
-1. RHYTHM - unnatural sentence flow, monotonous structure
-2. WATER (filler) - unnecessary words, redundant phrases, padding
-3. REPETITIONS - repeated words/phrases across blocks
-4. ANOMALIES - inconsistent tone, style breaks
-5. HALLUCINATIONS - claims that seem unsupported or suspicious${typeCheckRules}${styleCheckRules}
+1. RHYTHM - unnatural sentence flow, monotonous structure, poor transitions between blocks
+2. WATER (filler) - unnecessary words, redundant phrases, padding content
+3. REPETITIONS - repeated words/phrases within or across blocks
+4. ANOMALIES - inconsistent tone, style breaks, context mismatches
+5. HALLUCINATIONS - unsupported claims or suspicious statistics${typeCheckRules}${styleCheckRules}
 
-IMPORTANT:
-- Return ONLY blocks that have REAL issues
-- Be specific about what's wrong
-- Provide actionable suggestions
-- Return valid JSON array`;
+CRITICAL: Return ONLY blocks with REAL, specific issues. Do NOT flag blocks just to fill a quota.
+Return valid JSON array.`;
 
-    const userPrompt = `Review this ${langName} article and identify blocks that need improvement.
-Each block is marked with [BLOCK X] where X is the block ID.
+      const userPrompt = `Review this ${langName} article:
 
-ARTICLE TYPE: ${articleType.toUpperCase()}${comment ? `\nAUTHOR'S STYLE INSTRUCTIONS: ${comment}` : ''}
+ARTICLE TYPE: ${articleType.toUpperCase()}${comment ? `\nSTYLE: ${comment}` : ''}
 
 === ARTICLE ===
 ${articleWithIds}
 
-Return a JSON array of objects with this structure:
-[
-  {
-    "blockId": <number>,
-    "issues": ["issue1", "issue2"],
-    "suggestion": "specific suggestion for improvement"
-  }
-]
+Return JSON array:
+[{"blockId": <number>, "issues": ["specific issue"], "suggestion": "specific fix"}]
 
-If the article is perfect, return an empty array: []
-Return ONLY the JSON array, no other text.`;
+Empty array [] if perfect. ONLY JSON, no other text.`;
 
-    try {
       const response = await this.chat(systemPrompt, userPrompt, 0.3);
-
-      // Parse JSON response
-      const cleanedResponse = response
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-
-      const issues = JSON.parse(cleanedResponse);
-
-      if (!Array.isArray(issues)) {
-        logger.warn('AI returned non-array response for review, returning empty');
-        return [];
+      const cleanedResponse = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleanedResponse);
+      if (Array.isArray(parsed)) {
+        rhythmBlocksToFix = parsed;
       }
-
-      logger.info(`Article review found ${issues.length} blocks with issues`);
-      return issues;
-
     } catch (error) {
-      logger.error('Failed to review article quality', { error });
-      return [];
+      logger.error('Rhythm check failed', { error });
     }
+
+    const rhythmCheck = {
+      passed: rhythmBlocksToFix.length === 0,
+      blocksToFix: rhythmBlocksToFix,
+    };
+
+    // === Overall result ===
+    const passed = wordCountCheck.passed && linkCountCheck.passed && linkQualityCheck.passed && keywordDensityCheck.passed && rhythmCheck.passed;
+
+    logger.info(`Comprehensive review: ${passed ? 'PASSED' : 'FAILED'}`, {
+      wordCount: `${actualWordCount} (${minWords}-${maxWords})`,
+      links: `${presentUrls.length}/${configuredLinks.length}`,
+      linkQuality: linkQualityIssues.length === 0 ? 'OK' : `${linkQualityIssues.length} issues`,
+      keywordDensity: `${density.toFixed(1)}%`,
+      rhythmIssues: rhythmBlocksToFix.length,
+    });
+
+    return {
+      passed,
+      wordCountCheck,
+      linkCountCheck,
+      linkQualityCheck,
+      keywordDensityCheck,
+      rhythmCheck,
+    };
   }
 
   /**
@@ -1224,30 +1339,4 @@ Return ONLY the JSON, no other text.`;
     }
   }
 
-  /**
-   * Generate improvement tasks for blocks when no issues are found
-   * Used to ensure we always improve at least some blocks
-   */
-  generateImprovementTasks(
-    blocks: Array<{ id: number; type: string; heading: string; content?: string }>,
-    count: number
-  ): Array<{ blockId: number; issues: string[]; suggestion: string }> {
-    // Filter content blocks (not h1/faq)
-    const contentBlocks = blocks.filter(
-      b => b.content && b.type !== 'h1' && b.type !== 'faq'
-    );
-
-    if (contentBlocks.length === 0) return [];
-
-    // Select random blocks
-    const selectedBlocks = contentBlocks
-      .sort(() => Math.random() - 0.5)
-      .slice(0, Math.min(count, contentBlocks.length));
-
-    return selectedBlocks.map(block => ({
-      blockId: block.id,
-      issues: ['General readability improvement'],
-      suggestion: 'Improve flow and clarity while maintaining the message',
-    }));
-  }
 }

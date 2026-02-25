@@ -211,6 +211,8 @@ export const generationsApi = {
     }>;
     linksAsList?: boolean;
     linksListPosition?: string;
+    minWords?: number;
+    maxWords?: number;
   }) => {
     const response = await api.post<ApiResponse>(`/projects/${projectId}/generations`, config);
     return response.data;
@@ -218,11 +220,6 @@ export const generationsApi = {
 
   delete: async (id: string) => {
     const response = await api.delete<ApiResponse>(`/generations/${id}`);
-    return response.data;
-  },
-
-  continue: async (id: string) => {
-    const response = await api.post<ApiResponse>(`/generations/${id}/continue`);
     return response.data;
   },
 
