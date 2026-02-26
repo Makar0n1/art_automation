@@ -35,6 +35,7 @@ export const createGeneration = async (
       linksListPosition,
       minWords,
       maxWords,
+      model,
     } = req.body;
 
     if (!userId) {
@@ -74,6 +75,7 @@ export const createGeneration = async (
         linksListPosition,
         minWords: Math.max(500, Math.min(5000, Number(minWords) || 1200)),
         maxWords: Math.max(700, Math.min(8000, Number(maxWords) || 1800)),
+        model: model || 'openai/gpt-5.2',
       },
       status: GenerationStatus.QUEUED,
       progress: 0,
@@ -382,32 +384,37 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
     }
 
     const previousStatus = generation.status;
+    const { model } = req.body || {};
 
-    // Clear all intermediate data and reset to initial state
-    await Generation.findByIdAndUpdate(id, {
-      $set: {
-        status: GenerationStatus.QUEUED,
-        progress: 0,
-        currentStep: 'queued',
-        serpResults: [],
-        structureAnalysis: null,
-        articleBlocks: [],
-        averageWordCount: null,
-        generatedArticle: null,
-        article: null,
-        seoTitle: null,
-        seoDescription: null,
-        error: null,
-        // Clear old logs and start with restart message
-        logs: [
-          {
-            timestamp: new Date(),
-            level: 'info',
-            message: `🔄 Restarting generation from scratch (previous status: ${previousStatus})...`,
-          },
-        ],
-      },
-    });
+    // Build update object
+    const updateFields: Record<string, unknown> = {
+      status: GenerationStatus.QUEUED,
+      progress: 0,
+      currentStep: 'queued',
+      serpResults: [],
+      structureAnalysis: null,
+      articleBlocks: [],
+      averageWordCount: null,
+      generatedArticle: null,
+      article: null,
+      seoTitle: null,
+      seoDescription: null,
+      error: null,
+      logs: [
+        {
+          timestamp: new Date(),
+          level: 'info',
+          message: `🔄 Restarting generation from scratch (previous status: ${previousStatus})${model ? `, model: ${model}` : ''}...`,
+        },
+      ],
+    };
+
+    // If a new model is provided, update it in config
+    if (model) {
+      updateFields['config.model'] = model;
+    }
+
+    await Generation.findByIdAndUpdate(id, { $set: updateFields });
 
     // Queue generation with original config
     await queueGeneration(id, userId);

@@ -1,15 +1,17 @@
 /**
- * Generation Detail Page with Real-time Logs
- * Redesigned with compact logs panel and prominent intermediate results
+ * Generation Detail Page — state-aware two-column layout
+ * Panels: Plan (Structure + Meta) | Output (Article) | Logs
+ * No outer scroll — each panel scrolls internally.
  */
 
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
+  ArrowDown,
   Copy,
   Check,
   AlertCircle,
@@ -22,64 +24,103 @@ import {
   ChevronUp,
   Terminal,
   Settings,
+  Maximize2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
 
 import {
   Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
   Button,
   Badge,
   ProgressBar,
+  Modal,
 } from '@/components/ui';
+import { ModelSelector } from '@/components/ModelSelector';
 import { generationsApi } from '@/lib/api';
 import { initSocket, subscribeToGeneration } from '@/lib/socket';
 import { ArticleBlock, Generation, GenerationLog, GenerationStatus } from '@/types';
 import { getStatusLabel, cn } from '@/lib/utils';
 
-// Helper function to detect API-related errors
+/* ─── helpers ─── */
+
 const isApiKeyError = (error: string): { isApiError: boolean; service: string | null } => {
-  const errorLower = error.toLowerCase();
-
-  if (errorLower.includes('openrouter') || errorLower.includes('open router')) {
-    return { isApiError: true, service: 'OpenRouter' };
-  }
-  if (errorLower.includes('firecrawl') || errorLower.includes('fire crawl')) {
-    return { isApiError: true, service: 'Firecrawl' };
-  }
-  if (errorLower.includes('supabase')) {
-    return { isApiError: true, service: 'Supabase' };
-  }
-  if (errorLower.includes('api key') || errorLower.includes('invalid key') || errorLower.includes('unauthorized') || errorLower.includes('401')) {
+  const e = error.toLowerCase();
+  if (e.includes('openrouter') || e.includes('open router')) return { isApiError: true, service: 'OpenRouter' };
+  if (e.includes('firecrawl') || e.includes('fire crawl'))  return { isApiError: true, service: 'Firecrawl' };
+  if (e.includes('supabase'))                                return { isApiError: true, service: 'Supabase' };
+  if (e.includes('api key') || e.includes('invalid key') || e.includes('unauthorized') || e.includes('401'))
     return { isApiError: true, service: null };
-  }
-
   return { isApiError: false, service: null };
 };
+
+/** Build markdown for a single block (strip any leading heading AI might have repeated) */
+const getBlockMarkdown = (block: ArticleBlock): string => {
+  const raw = (block.content || '').replace(/^#{1,6}\s+[^\n]+\n+/, '').trim();
+  switch (block.type) {
+    case 'h1':         return `# ${raw}`;
+    case 'intro':      return raw;
+    case 'h2':         return `## ${block.heading}\n\n${raw}`;
+    case 'h3':         return `### ${block.heading}\n\n${raw}`;
+    case 'conclusion': return block.heading ? `## ${block.heading}\n\n${raw}` : raw;
+    case 'faq':        return block.heading ? `## ${block.heading}\n\n${raw}` : `## FAQ\n\n${raw}`;
+    default:           return raw;
+  }
+};
+
+/* ─── component ─── */
 
 export default function GenerationPage() {
   const params = useParams();
   const router = useRouter();
   const generationId = params.id as string;
 
+  /* state */
   const [generation, setGeneration] = useState<Generation | null>(null);
-  const [logs, setLogs] = useState<GenerationLog[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isCopied, setIsCopied] = useState(false);
-  const [isRestarting, setIsRestarting] = useState(false);
+  const [logs, setLogs]             = useState<GenerationLog[]>([]);
+  const [isLoading, setIsLoading]   = useState(true);
+
+  const [isCopied, setIsCopied]         = useState(false);
   const [isTitleCopied, setIsTitleCopied] = useState(false);
-  const [isDescCopied, setIsDescCopied] = useState(false);
-  const [isLogsExpanded, setIsLogsExpanded] = useState(false);
+  const [isDescCopied, setIsDescCopied]   = useState(false);
+
+  const [isRestarting, setIsRestarting]             = useState(false);
+  const [isLogsExpanded, setIsLogsExpanded]         = useState(true);
+  const [isArticleFullscreen, setIsArticleFullscreen] = useState(false);
   const [isConfigExpanded, setIsConfigExpanded] = useState(false);
-  const logsEndRef = useRef<HTMLDivElement>(null);
+  const [selectedModel, setSelectedModel]       = useState('');
+  const [isLogsAtBottom, setIsLogsAtBottom]     = useState(true);
 
-  const scrollToBottom = () => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+  /* refs */
+  const logsEndRef       = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
+  /* ─── derived ─── */
+
+  const isCompleted  = generation?.status === GenerationStatus.COMPLETED;
+  const isFailed     = generation?.status === GenerationStatus.FAILED;
+  const isQueued     = generation?.status === GenerationStatus.QUEUED;
+  const isActive     = !!generation && !isCompleted && !isFailed;
+  const isInProgress = isActive && !isQueued;
+
+  const blocks            = generation?.articleBlocks?.filter(b => b && b.type) || [];
+  const blocksWithContent = blocks.filter(b => b.content);
+  const hasBlocks         = blocks.length > 0;
+  const hasArticle        = !!(generation?.generatedArticle || generation?.article || blocksWithContent.length > 0);
+  const hasMeta           = !!(generation?.seoTitle || generation?.seoDescription);
+
+  // First block without content → currently being written
+  const currentBlockId = isInProgress && hasBlocks
+    ? (blocks.find(b => !b.content)?.id ?? -1)
+    : -1;
+
+  // Zone flex ratios by state
+  const planFlex   = isCompleted ? 35 : isFailed ? 40 : 50;
+  const outputFlex = isCompleted ? 65 : isFailed ? 60 : 50;
+
+  /* ─── effects ─── */
+
+  // Fetch on mount
   useEffect(() => {
     const fetchGeneration = async () => {
       try {
@@ -88,91 +129,86 @@ export default function GenerationPage() {
           const gen = response.data as Generation;
           setGeneration(gen);
           setLogs(gen.logs || []);
+          if (gen.config.model) setSelectedModel(gen.config.model);
         }
-      } catch (error) {
+      } catch {
         toast.error('Failed to load generation');
         router.push('/dashboard');
       } finally {
         setIsLoading(false);
       }
     };
-
     fetchGeneration();
   }, [generationId, router]);
 
+  // Socket.IO
   useEffect(() => {
     if (!generation) return;
-
     const token = localStorage.getItem('token');
-    if (token) {
-      initSocket(token);
-    }
+    if (token) initSocket(token);
 
     const unsubscribe = subscribeToGeneration(generationId, {
-      onLog: (log) => {
-        setLogs((prev) => [...prev, log]);
-      },
-      onStatus: (status, progress) => {
-        setGeneration((prev) =>
-          prev ? { ...prev, status, progress } : null
-        );
-      },
-      onBlocks: (blocks: ArticleBlock[]) => {
-        setGeneration((prev) =>
-          prev ? { ...prev, articleBlocks: blocks } : null
-        );
-      },
+      onLog: (log) => setLogs(prev => [...prev, log]),
+      onStatus: (status, progress) =>
+        setGeneration(prev => prev ? { ...prev, status, progress } : null),
+      onBlocks: (newBlocks: ArticleBlock[]) =>
+        setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null),
       onCompleted: (article) => {
-        setGeneration((prev) =>
-          prev
-            ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article: article }
-            : null
+        setGeneration(prev =>
+          prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
         );
         toast.success('Article generation completed!');
       },
       onError: (error) => {
-        setGeneration((prev) =>
-          prev ? { ...prev, status: GenerationStatus.FAILED, error } : null
-        );
-
-        // Check if this is an API key related error
+        setGeneration(prev => prev ? { ...prev, status: GenerationStatus.FAILED, error } : null);
         const { isApiError, service } = isApiKeyError(error);
         if (isApiError) {
-          const serviceText = service ? `${service} ` : '';
-          toast.error(`${serviceText}API key error. Please check your API keys in Settings.`, {
-            duration: 5000,
-          });
-          // Delay redirect slightly so user can see the error
-          setTimeout(() => {
-            router.push('/dashboard/settings');
-          }, 2000);
+          toast.error(`${service ? service + ' ' : ''}API key error. Check Settings.`, { duration: 5000 });
+          setTimeout(() => router.push('/dashboard/settings'), 2000);
         } else {
           toast.error(`Generation failed: ${error}`);
         }
       },
     });
+    return () => { unsubscribe(); };
+  }, [generation, generationId, router]);
 
-    return () => {
-      unsubscribe();
-    };
-  }, [generation, generationId]);
-
+  // Auto-scroll logs only when at bottom
   useEffect(() => {
-    scrollToBottom();
-  }, [logs]);
+    if (isLogsAtBottom) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs, isLogsAtBottom]);
+
+  /* ─── handlers ─── */
+
+  const handleLogsScroll = useCallback(() => {
+    const el = logsContainerRef.current;
+    if (!el) return;
+    setIsLogsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 50);
+  }, []);
+
+  const jumpToLatest = () => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    setIsLogsAtBottom(true);
+  };
+
+  const scrollToBlock = (blockId: number) => {
+    const el = document.getElementById(`article-block-${blockId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    el.style.boxShadow = '0 0 0 2px rgba(59,130,246,0.45)';
+    el.style.borderRadius = '6px';
+    setTimeout(() => { el.style.boxShadow = ''; el.style.borderRadius = ''; }, 2000);
+  };
 
   const copyArticle = async () => {
-    const articleText = generation?.generatedArticle || generation?.article;
-    if (!articleText) return;
-
+    const text = generation?.generatedArticle || generation?.article;
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(articleText);
+      await navigator.clipboard.writeText(text);
       setIsCopied(true);
-      toast.success('Article copied to clipboard');
+      toast.success('Article copied');
       setTimeout(() => setIsCopied(false), 2000);
-    } catch {
-      toast.error('Failed to copy');
-    }
+    } catch { toast.error('Failed to copy'); }
   };
 
   const copySeoTitle = async () => {
@@ -182,9 +218,7 @@ export default function GenerationPage() {
       setIsTitleCopied(true);
       toast.success('SEO Title copied');
       setTimeout(() => setIsTitleCopied(false), 2000);
-    } catch {
-      toast.error('Failed to copy');
-    }
+    } catch { toast.error('Failed to copy'); }
   };
 
   const copySeoDescription = async () => {
@@ -194,407 +228,490 @@ export default function GenerationPage() {
       setIsDescCopied(true);
       toast.success('SEO Description copied');
       setTimeout(() => setIsDescCopied(false), 2000);
-    } catch {
-      toast.error('Failed to copy');
-    }
+    } catch { toast.error('Failed to copy'); }
   };
 
   const handleRestart = async () => {
     if (!generation) return;
-
     setIsRestarting(true);
     try {
-      const response = await generationsApi.restart(generationId);
+      const response = await generationsApi.restart(generationId, selectedModel || generation.config.model);
       if (response.success) {
-        toast.success('Generation restarted from beginning');
-
-        // Clear logs and reload generation from server
+        toast.success('Generation restarted');
         setLogs([]);
-
-        // Fetch fresh generation data to trigger Socket.IO resubscription
-        const freshResponse = await generationsApi.getOne(generationId);
-        if (freshResponse.success) {
-          setGeneration(freshResponse.data as Generation);
+        const fresh = await generationsApi.getOne(generationId);
+        if (fresh.success) {
+          const gen = fresh.data as Generation;
+          setGeneration(gen);
+          if (gen.config.model) setSelectedModel(gen.config.model);
+          setIsLogsExpanded(true);
         }
       }
-    } catch (error) {
-      toast.error('Failed to restart generation');
-    } finally {
-      setIsRestarting(false);
-    }
+    } catch { toast.error('Failed to restart'); }
+    finally { setIsRestarting(false); }
   };
+
+  /* ─── loading / empty ─── */
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-20">
+      <div className="flex h-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
       </div>
     );
   }
 
-  if (!generation) {
-    return null;
-  }
+  if (!generation) return null;
 
-  const projectName = typeof generation.projectId === 'object'
-    ? generation.projectId.name
-    : 'Unknown Project';
+  const projectName = typeof generation.projectId === 'object' ? generation.projectId.name : 'Unknown Project';
+  const projectId   = typeof generation.projectId === 'object' ? generation.projectId._id : generation.projectId;
 
-  const projectId = typeof generation.projectId === 'object'
-    ? generation.projectId._id
-    : generation.projectId;
-
-  const isActive =
-    generation.status !== GenerationStatus.COMPLETED &&
-    generation.status !== GenerationStatus.FAILED;
+  /* ═══════════════════════════════ RENDER ═══════════════════════════════ */
 
   return (
-    <div className="space-y-4">
-      {/* Compact Header with Status */}
-      <div className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-        <div className="flex items-center gap-4">
+    <div className="noise-bg flex h-full flex-col gap-2">
+      {/* ──────── Header ──────── */}
+      <div className="shrink-0 flex items-center justify-between rounded-lg border border-gray-100/60 bg-white/80 px-4 py-2.5 dark:border-gray-700/30 dark:bg-gray-800/80">
+        <div className="flex items-center gap-3 min-w-0">
           <Link href={`/dashboard/project/${projectId}`}>
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
+            <Button variant="ghost" size="sm"><ArrowLeft className="h-4 w-4" /></Button>
           </Link>
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate text-lg font-bold text-gray-900 dark:text-white">
                 {generation.config.mainKeyword}
               </h1>
-              <Badge
-                variant={
-                  generation.status === GenerationStatus.COMPLETED
-                    ? 'success'
-                    : generation.status === GenerationStatus.FAILED
-                    ? 'error'
-                    : 'info'
-                }
-              >
+              <Badge variant={isCompleted ? 'success' : isFailed ? 'error' : 'info'} size="sm">
                 {getStatusLabel(generation.status)}
               </Badge>
-              {isActive && <Loader2 className="h-4 w-4 animate-spin text-blue-500" />}
+              {isInProgress && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />}
             </div>
-            <div className="flex items-center gap-4 mt-1 text-sm text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
               <span>{projectName}</span>
-              <span>•</span>
+              <span>&middot;</span>
               <span className="capitalize">{generation.config.articleType}</span>
-              <span>•</span>
+              <span>&middot;</span>
               <span className="uppercase">{generation.config.language}</span>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Config toggle button */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setIsConfigExpanded(!isConfigExpanded)}
-            className="text-gray-500"
-          >
+
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setIsConfigExpanded(p => !p)} className="text-gray-400">
             <Settings className="h-4 w-4" />
           </Button>
-          {(generation.status === GenerationStatus.FAILED || generation.status === GenerationStatus.COMPLETED) && (
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={isRestarting ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-              onClick={handleRestart}
-              disabled={isRestarting}
-            >
-              {isRestarting ? 'Restarting...' : 'Restart'}
-            </Button>
+          {(isFailed || isCompleted) && (
+            <>
+              <ModelSelector
+                value={selectedModel || generation.config.model || 'openai/gpt-5.2'}
+                onChange={setSelectedModel}
+                className="w-48"
+              />
+              <Button
+                variant="secondary" size="sm"
+                leftIcon={isRestarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                onClick={handleRestart} disabled={isRestarting}
+              >
+                {isRestarting ? 'Restarting\u2026' : 'Restart'}
+              </Button>
+            </>
           )}
         </div>
       </div>
 
-      {/* Collapsible Config Panel */}
+      {/* ──────── Config panel (collapsible) ──────── */}
       {isConfigExpanded && (
-        <Card className="border-gray-200 dark:border-gray-700">
-          <CardContent className="py-3">
-            <div className="grid gap-3 md:grid-cols-3 text-sm">
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Type</span>
-                <p className="font-medium text-gray-900 dark:text-white capitalize">
-                  {generation.config.articleType}
-                </p>
+        <div className="shrink-0 rounded-lg border border-gray-100/60 bg-white/60 px-4 py-2.5 dark:border-gray-700/30 dark:bg-gray-800/60">
+          <div className="grid gap-3 text-xs sm:grid-cols-4">
+            <div><span className="text-gray-400">Type</span><p className="font-medium capitalize text-gray-900 dark:text-white">{generation.config.articleType}</p></div>
+            <div><span className="text-gray-400">Language</span><p className="font-medium uppercase text-gray-900 dark:text-white">{generation.config.language}</p></div>
+            <div><span className="text-gray-400">Region</span><p className="font-medium uppercase text-gray-900 dark:text-white">{generation.config.region}</p></div>
+            <div><span className="text-gray-400">Model</span><p className="font-medium text-gray-900 dark:text-white">{generation.config.model || 'openai/gpt-5.2'}</p></div>
+            {generation.config.keywords && generation.config.keywords.length > 0 && (
+              <div className="sm:col-span-4">
+                <span className="text-gray-400">Keywords</span>
+                <div className="mt-0.5 flex flex-wrap gap-1">
+                  {generation.config.keywords.map((kw, i) => <Badge key={i} variant="default" size="sm">{kw}</Badge>)}
+                </div>
               </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Language</span>
-                <p className="font-medium text-gray-900 dark:text-white uppercase">
-                  {generation.config.language}
-                </p>
+            )}
+            {generation.config.comment && (
+              <div className="sm:col-span-4">
+                <span className="text-gray-400">Comment</span>
+                <p className="mt-0.5 whitespace-pre-wrap text-gray-700 dark:text-gray-300">{generation.config.comment}</p>
               </div>
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">Region</span>
-                <p className="font-medium text-gray-900 dark:text-white uppercase">
-                  {generation.config.region}
-                </p>
-              </div>
-              {generation.config.keywords?.length > 0 && (
-                <div className="md:col-span-4">
-                  <span className="text-gray-500 dark:text-gray-400">Keywords</span>
-                  <div className="mt-1 flex flex-wrap gap-1">
-                    {generation.config.keywords.map((kw, i) => (
-                      <Badge key={i} variant="default" size="sm">
-                        {kw}
-                      </Badge>
-                    ))}
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ──────── Progress bar ──────── */}
+      {(isActive || generation.progress > 0) && (
+        <div className="shrink-0 flex items-center gap-3 px-1">
+          <div className="flex-1"><ProgressBar value={generation.progress} size="sm" /></div>
+          <span className="min-w-[3rem] text-right text-xs font-medium text-gray-500">{generation.progress}%</span>
+        </div>
+      )}
+
+      {/* ════════════════ Main two-column grid ════════════════ */}
+      <div className="flex-1 min-h-0 grid grid-cols-[1fr_minmax(260px,30%)] gap-3">
+
+        {/* ──── Left column: Plan zone + Output zone ──── */}
+        <div className="min-h-0 flex flex-col gap-2">
+
+          {/* Plan zone */}
+          <div className="min-h-0 flex flex-col gap-2 overflow-hidden" style={{ flex: planFlex }}>
+
+            {/* Error banner — Failed only */}
+            {isFailed && generation.error && (
+              <div className="shrink-0 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-800 dark:bg-red-900/20">
+                <div className="flex items-center gap-2 min-w-0">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-red-800 dark:text-red-300">Generation Failed</p>
+                    <p className="truncate text-[11px] text-red-600 dark:text-red-400">{generation.error}</p>
                   </div>
                 </div>
-              )}
-              {generation.config.comment && (
-                <div className="md:col-span-4">
-                  <span className="text-gray-500 dark:text-gray-400">Comment</span>
-                  <p className="text-gray-700 dark:text-gray-300 text-xs mt-1 whitespace-pre-wrap">
-                    {generation.config.comment}
-                  </p>
+                {isApiKeyError(generation.error).isApiError && (
+                  <Link href="/dashboard/settings">
+                    <Button variant="secondary" size="sm">Settings</Button>
+                  </Link>
+                )}
+              </div>
+            )}
+
+            {/* Article Structure card */}
+            <Card className="card-shine flex min-h-0 flex-1 flex-col overflow-hidden !p-0">
+              <div className="shrink-0 flex items-center gap-2 border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
+                <List className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  Article Structure
+                  {hasBlocks && (
+                    <span className="ml-1 font-normal text-gray-400">
+                      ({blocksWithContent.length}/{blocks.length})
+                    </span>
+                  )}
+                </span>
+              </div>
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5">
+                {!hasBlocks ? (
+                  <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
+                    <div>
+                      <Clock className="mx-auto h-5 w-5 opacity-40" />
+                      <p className="mt-1">
+                        {isQueued ? 'Waiting in queue\u2026' : isInProgress ? 'Analyzing structure\u2026' : 'Structure not generated'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5">
+                    {blocks.map(block => {
+                      const done      = !!block.content;
+                      const isCurrent = block.id === currentBlockId;
+                      return (
+                        <button
+                          key={block.id}
+                          type="button"
+                          onClick={() => done && scrollToBlock(block.id)}
+                          disabled={!done}
+                          className={cn(
+                            'w-full rounded-md px-2.5 py-1.5 text-left text-xs transition-all',
+                            block.type === 'h3' && 'pl-6',
+                            done && 'cursor-pointer hover:bg-gray-100/80 dark:hover:bg-gray-700/40',
+                            !done && !isCurrent && 'opacity-50',
+                            isCurrent && 'bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-900/20 dark:ring-blue-700',
+                          )}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            {done ? (
+                              <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+                            ) : isCurrent ? (
+                              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
+                            ) : (
+                              <div className="h-3 w-3 shrink-0 rounded-full border border-gray-300 dark:border-gray-600" />
+                            )}
+                            <Badge
+                              variant={done ? 'success' : isCurrent ? 'info' : 'default'}
+                              size="sm"
+                              className="shrink-0 !text-[10px] !px-1.5 !py-0"
+                            >
+                              {block.type?.toUpperCase() || 'BLOCK'}
+                            </Badge>
+                            <span className={cn(
+                              'min-w-0 truncate',
+                              done ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400',
+                            )}>
+                              {block.heading || '(No heading)'}
+                            </span>
+                            {done && (
+                              <span className="ml-auto shrink-0 text-[10px] text-gray-400">
+                                {block.content!.split(/\s+/).length}w
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </Card>
+
+            {/* SEO Metadata — stacked with labeled copy buttons */}
+            {hasMeta && (
+              <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+                {generation.seoTitle && (
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                        SEO Title
+                        <span className="ml-1 font-normal text-emerald-500">({generation.seoTitle.length}/60)</span>
+                      </span>
+                      <p className="mt-0.5 text-sm text-gray-900 dark:text-white leading-snug">{generation.seoTitle}</p>
+                    </div>
+                    <button
+                      onClick={copySeoTitle}
+                      className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                    >
+                      {isTitleCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Title</>}
+                    </button>
+                  </div>
+                )}
+                {generation.seoDescription && (
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                        SEO Description
+                        <span className="ml-1 font-normal text-emerald-500">({generation.seoDescription.length}/160)</span>
+                      </span>
+                      <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300 leading-snug">{generation.seoDescription}</p>
+                    </div>
+                    <button
+                      onClick={copySeoDescription}
+                      className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                    >
+                      {isDescCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Desc</>}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Output zone — Generated Article */}
+          <div className="min-h-0 flex flex-col" style={{ flex: outputFlex }}>
+            <Card className="card-shine flex min-h-0 flex-1 flex-col overflow-hidden !p-0">
+              {/* Sticky header with Copy */}
+              <div className="shrink-0 flex items-center justify-between border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
+                <div className="flex items-center gap-2">
+                  <FileText className="h-3.5 w-3.5 text-gray-400" />
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">Generated Article</span>
+                </div>
+                {hasArticle && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setIsArticleFullscreen(true)}
+                      className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+                      title="Open fullscreen"
+                    >
+                      <Maximize2 className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={copyArticle}
+                      className="flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-medium text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700"
+                    >
+                      {isCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy</>}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Scrollable article content */}
+              <div className="flex-1 overflow-y-auto px-3 py-2">
+                {blocksWithContent.length > 0 ? (
+                  /* Block-by-block rendering — supports click-to-scroll from Structure */
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
+                    {blocksWithContent.map(block => (
+                      <section
+                        key={block.id}
+                        id={`article-block-${block.id}`}
+                        className="scroll-mt-2 transition-[box-shadow,border-radius] duration-500"
+                      >
+                        <ReactMarkdown>{getBlockMarkdown(block)}</ReactMarkdown>
+                      </section>
+                    ))}
+                  </div>
+                ) : (generation.generatedArticle || generation.article) ? (
+                  /* Fallback: full assembled article */
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
+                    <ReactMarkdown>{generation.generatedArticle || generation.article || ''}</ReactMarkdown>
+                  </div>
+                ) : (
+                  /* Empty placeholder */
+                  <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
+                    <div>
+                      {isQueued ? (
+                        <><Clock className="mx-auto h-6 w-6 opacity-40" /><p className="mt-1.5">Waiting in queue&hellip;</p></>
+                      ) : isInProgress ? (
+                        <><Loader2 className="mx-auto h-6 w-6 animate-spin opacity-40" /><p className="mt-1.5">Generating content&hellip;</p></>
+                      ) : isFailed ? (
+                        <><AlertCircle className="mx-auto h-6 w-6 opacity-40" /><p className="mt-1.5">No content generated</p></>
+                      ) : (
+                        <><FileText className="mx-auto h-6 w-6 opacity-40" /><p className="mt-1.5">No content</p></>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        {/* ──── Right column: Logs ──── */}
+        <div className="min-h-0 flex flex-col">
+          <Card className={cn(
+            'card-shine flex flex-col overflow-hidden !p-0 transition-all',
+            isLogsExpanded ? 'flex-1' : 'h-[300px] shrink-0'
+          )}>
+            {/* Logs header — click to expand/collapse */}
+            <div
+              className="shrink-0 flex cursor-pointer items-center justify-between border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30"
+              onClick={() => setIsLogsExpanded(p => !p)}
+            >
+              <div className="flex items-center gap-2">
+                <Terminal className="h-3.5 w-3.5 text-gray-400" />
+                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                  Logs <span className="font-normal text-gray-400">({logs.length})</span>
+                </span>
+                {isActive && <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />}
+              </div>
+              <div className="flex items-center gap-1">
+                {!isLogsAtBottom && isLogsExpanded && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); jumpToLatest(); }}
+                    className="rounded p-0.5 text-gray-400 hover:text-blue-500"
+                    title="Jump to latest"
+                  >
+                    <ArrowDown className="h-3 w-3" />
+                  </button>
+                )}
+                {isLogsExpanded
+                  ? <ChevronUp className="h-3.5 w-3.5 text-gray-400" />
+                  : <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
+                }
+              </div>
+            </div>
+
+            {/* Logs content */}
+            <div
+              ref={logsContainerRef}
+              onScroll={handleLogsScroll}
+              className="flex-1 overflow-y-auto px-2 py-1"
+            >
+              {logs.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
+                  <div>
+                    <Clock className="mx-auto h-5 w-5 opacity-40" />
+                    <p className="mt-1">Waiting&hellip;</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-0.5">
+                  {logs.map((log, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'rounded px-2 py-1 text-[11px] leading-relaxed',
+                        log.level === 'thinking' && 'bg-purple-50/80 text-purple-700 italic dark:bg-purple-900/20 dark:text-purple-300',
+                        log.level === 'error'    && 'bg-red-50/80 text-red-700 dark:bg-red-900/20 dark:text-red-300',
+                        log.level === 'warn'     && 'bg-yellow-50/80 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300',
+                        (log.level === 'info' || !log.level) && 'text-gray-600 dark:text-gray-400',
+                      )}
+                    >
+                      <span className="mr-1.5 opacity-40">
+                        {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className="break-words">{log.message}</span>
+                    </div>
+                  ))}
+                  <div ref={logsEndRef} />
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Progress Bar - inline and compact */}
-      {(isActive || generation.progress > 0) && (
-        <div className="flex items-center gap-3 px-1">
-          <div className="flex-1">
-            <ProgressBar value={generation.progress} size="sm" />
-          </div>
-          <span className="text-sm font-medium text-gray-600 dark:text-gray-400 min-w-[3rem] text-right">
-            {generation.progress}%
-          </span>
-        </div>
-      )}
-
-      {/* Main Content Grid - Logs on right, Results on left */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Main Results Column (2/3 width) */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Article Blocks - Main Focus */}
-          {generation.articleBlocks && generation.articleBlocks.length > 0 && (
-            <Card>
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <List className="h-4 w-4" />
-                  Article Structure ({generation.articleBlocks.filter(b => b?.content).length}/{generation.articleBlocks.length} written)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                  {generation.articleBlocks.filter(block => block && block.type).map((block) => (
-                    <div
-                      key={block.id}
-                      className={cn(
-                        'rounded-lg border p-3 transition-all',
-                        block.content && 'border-green-200 bg-green-50/50 dark:border-green-800 dark:bg-green-900/10',
-                        !block.content && block.type === 'h1' && 'border-purple-200 bg-purple-50/50 dark:border-purple-800 dark:bg-purple-900/10',
-                        !block.content && block.type === 'intro' && 'border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-900/10',
-                        !block.content && (block.type === 'h2' || block.type === 'h3') && 'border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800',
-                        !block.content && block.type === 'conclusion' && 'border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-900/10',
-                        !block.content && block.type === 'faq' && 'border-orange-200 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-900/10',
-                        block.type === 'h3' && 'ml-4'
-                      )}
-                    >
-                      <div className="flex items-start gap-2">
-                        <Badge
-                          variant={block.content ? 'success' : 'default'}
-                          size="sm"
-                          className="shrink-0"
-                        >
-                          {block.type?.toUpperCase() || 'BLOCK'}
-                        </Badge>
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-sm text-gray-900 dark:text-white truncate">
-                            {block.heading || '(No heading)'}
-                          </h4>
-                          {block.content && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                              {block.content.split(/\s+/).length} words
-                            </p>
-                          )}
-                          {!block.content && block.instruction && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
-                              {block.instruction}
-                            </p>
-                          )}
-                        </div>
-                        {block.content && <Check className="h-4 w-4 text-green-600 shrink-0" />}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* SEO Metadata - Compact */}
-          {(generation.seoTitle || generation.seoDescription) && (
-            <Card className="border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-900/10">
-              <CardContent className="py-3">
-                <div className="space-y-2">
-                  {generation.seoTitle && (
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                          Title ({generation.seoTitle.length}/60)
-                        </span>
-                        <p className="text-sm text-gray-900 dark:text-white truncate">
-                          {generation.seoTitle}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={copySeoTitle}
-                        className="h-7 px-2"
-                      >
-                        {isTitleCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      </Button>
-                    </div>
-                  )}
-                  {generation.seoDescription && (
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                          Description ({generation.seoDescription.length}/160)
-                        </span>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 line-clamp-2">
-                          {generation.seoDescription}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={copySeoDescription}
-                        className="h-7 px-2"
-                      >
-                        {isDescCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Generated Article */}
-          {(generation.generatedArticle || generation.article) && (
-            <Card>
-              <CardHeader className="py-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Generated Article
-                  </CardTitle>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    leftIcon={isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                    onClick={copyArticle}
-                    className="h-7"
-                  >
-                    {isCopied ? 'Copied!' : 'Copy'}
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="prose prose-sm max-w-none dark:prose-invert max-h-[600px] overflow-y-auto prose-headings:font-bold prose-h1:text-2xl prose-h1:mt-0 prose-h2:text-xl prose-h2:mt-6 prose-h2:mb-3 prose-h3:text-lg prose-h3:mt-4 prose-h3:mb-2 prose-p:my-3 prose-ul:my-2 prose-li:my-1 prose-strong:text-gray-900 dark:prose-strong:text-white">
-                  <ReactMarkdown>
-                    {generation.generatedArticle || generation.article || ''}
-                  </ReactMarkdown>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Error Display */}
-          {generation.status === GenerationStatus.FAILED && generation.error && (
-            <Card className="border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20">
-              <CardContent className="py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
-                    <div>
-                      <p className="font-medium text-red-800 dark:text-red-300 text-sm">
-                        Generation Failed
-                      </p>
-                      <p className="text-xs text-red-600 dark:text-red-400">
-                        {generation.error}
-                      </p>
-                    </div>
-                  </div>
-                  {isApiKeyError(generation.error).isApiError && (
-                    <Link href="/dashboard/settings">
-                      <Button variant="secondary" size="sm">
-                        Go to Settings
-                      </Button>
-                    </Link>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
-        {/* Logs Column (1/3 width) */}
-        <div className="lg:col-span-1">
-          <Card className="sticky top-4">
-            <CardHeader className="py-2 px-3 cursor-pointer" onClick={() => setIsLogsExpanded(!isLogsExpanded)}>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Terminal className="h-4 w-4" />
-                  Logs ({logs.length})
-                  {isActive && <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse" />}
-                </CardTitle>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                  {isLogsExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className={cn(
-              "px-3 pb-3 pt-0 transition-all overflow-hidden",
-              isLogsExpanded ? "max-h-[600px]" : "max-h-[250px]"
-            )}>
-              <div className={cn(
-                "overflow-y-auto space-y-1",
-                isLogsExpanded ? "h-[580px]" : "h-[230px]"
-              )}>
-                {logs.length === 0 ? (
-                  <div className="py-4 text-center text-gray-500 dark:text-gray-400">
-                    <Clock className="mx-auto h-6 w-6 opacity-50" />
-                    <p className="mt-1 text-xs">Waiting...</p>
-                  </div>
-                ) : (
-                  logs.map((log, index) => (
-                    <div
-                      key={index}
-                      className={cn(
-                        'rounded px-2 py-1.5 text-xs',
-                        log.level === 'thinking' && 'bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:text-purple-300 italic',
-                        log.level === 'error' && 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-300',
-                        log.level === 'warn' && 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300',
-                        log.level === 'info' && 'bg-gray-50 text-gray-700 dark:bg-gray-800 dark:text-gray-300',
-                        !log.level && 'bg-gray-50 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
-                      )}
-                    >
-                      <div className="flex items-start gap-2">
-                        <span className="shrink-0 opacity-50">
-                          {new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </span>
-                        <span className="break-words">{log.message}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
-                <div ref={logsEndRef} />
-              </div>
-            </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* ════════════════ Fullscreen Article Modal ════════════════ */}
+      <Modal
+        isOpen={isArticleFullscreen}
+        onClose={() => setIsArticleFullscreen(false)}
+        size="full"
+      >
+        <div className="flex h-[85vh] flex-col pr-4">
+          {/* Modal header — pr-8 avoids X close button */}
+          <div className="shrink-0 flex items-center justify-between border-b border-gray-200 pb-3 pr-6 dark:border-gray-700">
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              {generation.config.mainKeyword}
+            </h2>
+            <button
+              onClick={copyArticle}
+              className="flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600"
+            >
+              {isCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy Article</>}
+            </button>
+          </div>
+
+          {/* SEO Meta inside modal */}
+          {hasMeta && (
+            <div className="shrink-0 mt-3 flex flex-col gap-2 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-4 py-3 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+              {generation.seoTitle && (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                      SEO Title
+                      <span className="ml-1.5 font-normal text-emerald-500">({generation.seoTitle.length}/60)</span>
+                    </span>
+                    <p className="mt-0.5 text-sm text-gray-900 dark:text-white">{generation.seoTitle}</p>
+                  </div>
+                  <button
+                    onClick={copySeoTitle}
+                    className="shrink-0 flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                  >
+                    {isTitleCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy Title</>}
+                  </button>
+                </div>
+              )}
+              {generation.seoDescription && (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                      SEO Description
+                      <span className="ml-1.5 font-normal text-emerald-500">({generation.seoDescription.length}/160)</span>
+                    </span>
+                    <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300">{generation.seoDescription}</p>
+                  </div>
+                  <button
+                    onClick={copySeoDescription}
+                    className="shrink-0 flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                  >
+                    {isDescCopied ? <><Check className="h-3.5 w-3.5" /> Copied</> : <><Copy className="h-3.5 w-3.5" /> Copy Desc</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Scrollable article body — full width */}
+          <div className="mt-3 flex-1 min-h-0 overflow-y-auto rounded-lg border border-gray-100 bg-white px-4 py-4 dark:border-gray-700 dark:bg-gray-800/50">
+            <div className="prose prose-base max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h1:mt-0 prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-3 prose-h3:text-lg prose-h3:mt-5 prose-h3:mb-2 prose-p:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-2 prose-td:text-sm dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
+              <ReactMarkdown>
+                {generation.generatedArticle || generation.article || ''}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

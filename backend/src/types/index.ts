@@ -136,6 +136,7 @@ export interface GenerationConfig {
   linksListPosition?: LinkPosition;
   minWords?: number;  // default 1200
   maxWords?: number;  // default 1800
+  model?: string;     // OpenRouter model ID, default 'openai/gpt-5.2'
 }
 
 /**

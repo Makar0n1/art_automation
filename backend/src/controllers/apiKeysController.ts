@@ -552,3 +552,72 @@ export const testFirecrawl = async (
  * GET /api/settings/api-keys
  */
 export const getApiKeysStatus = getMaskedApiKeys;
+
+/**
+ * Get available OpenRouter models for article generation
+ * GET /api/settings/api-keys/openrouter/models
+ */
+export const getOpenRouterModels = async (
+  req: AuthenticatedRequest,
+  res: Response<ApiResponse>
+) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) {
+      throw new AppError('User not found', 404);
+    }
+
+    const user = await User.findById(userId).select('+apiKeys');
+    if (!user?.apiKeys?.openRouter?.apiKey) {
+      throw new AppError('OpenRouter API key is not configured', 400);
+    }
+
+    const apiKey = decrypt(user.apiKeys.openRouter.apiKey);
+
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new AppError('Failed to fetch models from OpenRouter', 502);
+    }
+
+    const data = await response.json() as { data: Array<{ id: string; name: string; description?: string; pricing?: { prompt: string; completion: string }; context_length?: number; top_provider?: { max_completion_tokens?: number } }> };
+
+    // Filter to text generation models only (exclude image, embedding, moderation models)
+    const textModels = (data.data || [])
+      .filter((m: { id: string }) => {
+        const id = m.id.toLowerCase();
+        // Exclude non-text-generation models
+        if (id.includes('embedding') || id.includes('moderation') || id.includes('tts') || id.includes('whisper') || id.includes('dall-e') || id.includes('stable-diffusion') || id.includes('image') || id.includes('vision-only') || id.includes('audio')) {
+          return false;
+        }
+        return true;
+      })
+      .map((m: { id: string; name: string; description?: string; pricing?: { prompt: string; completion: string }; context_length?: number; top_provider?: { max_completion_tokens?: number } }) => ({
+        id: m.id,
+        name: m.name,
+        description: m.description || '',
+        pricing: m.pricing ? {
+          prompt: m.pricing.prompt,
+          completion: m.pricing.completion,
+        } : undefined,
+        contextLength: m.context_length,
+        maxCompletionTokens: m.top_provider?.max_completion_tokens,
+      }));
+
+    res.json({
+      success: true,
+      data: textModels,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Get OpenRouter models error', { error });
+      res.status(500).json({ success: false, error: 'Failed to fetch models' });
+    }
+  }
+};

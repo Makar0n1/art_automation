@@ -249,6 +249,9 @@ export const startQueueProcessor = () => {
       throw new Error('Generation not found');
     }
 
+    // Model from config (or default)
+    const aiModel = generation.config.model || 'openai/gpt-5.2';
+
     // Get user for API keys
     const user = await User.findById(userId);
     if (!user) {
@@ -387,7 +390,7 @@ export const startQueueProcessor = () => {
       const freshGeneration = await Generation.findById(generationId);
       if (!freshGeneration) throw new Error('Generation not found');
 
-      const openRouter = new OpenRouterService(apiKeys.openRouter);
+      const openRouter = new OpenRouterService(apiKeys.openRouter, aiModel);
 
       try {
         // Analyze structures
@@ -477,7 +480,7 @@ export const startQueueProcessor = () => {
         throw new Error('No article blocks found for enrichment');
       }
 
-      const openRouter = new OpenRouterService(apiKeys.openRouter);
+      const openRouter = new OpenRouterService(apiKeys.openRouter, aiModel);
 
       try {
         const enrichedBlocks = await openRouter.enrichBlockInstructions(
@@ -741,7 +744,7 @@ export const startQueueProcessor = () => {
       throw new Error('No article blocks found for writing');
     }
 
-    const openRouter = new OpenRouterService(apiKeys.openRouter);
+    const openRouter = new OpenRouterService(apiKeys.openRouter, aiModel);
     const totalBlocks = freshGeneration.articleBlocks.length;
     const configMinWords = freshGeneration.config.minWords || 1200;
     const configMaxWords = freshGeneration.config.maxWords || 1800;
@@ -932,7 +935,7 @@ export const startQueueProcessor = () => {
         if (!apiKeysForLinks.openRouter) {
           throw new Error('OpenRouter API key not configured');
         }
-        openRouterForLinks = new OpenRouterService(apiKeysForLinks.openRouter);
+        openRouterForLinks = new OpenRouterService(apiKeysForLinks.openRouter, aiModel);
         const blocksForLinks = genForLinks.articleBlocks as ArticleBlock[];
 
         // Step 6.1: Select which blocks should get which links (deterministic)
@@ -1112,7 +1115,7 @@ export const startQueueProcessor = () => {
         throw new Error('OpenRouter API key not configured');
       }
 
-      const openRouterForReview = new OpenRouterService(apiKeysForReview.openRouter);
+      const openRouterForReview = new OpenRouterService(apiKeysForReview.openRouter, aiModel);
 
       // Reload generation to get latest blocks
       const genForReview = await Generation.findById(generationId);

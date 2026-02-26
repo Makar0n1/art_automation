@@ -69,6 +69,7 @@ const GenerationConfigSchema = new Schema({
   },
   minWords: { type: Number, default: 1200 },
   maxWords: { type: Number, default: 1800 },
+  model: { type: String, default: 'openai/gpt-5.2', trim: true },
 }, { _id: false });
 
 /**

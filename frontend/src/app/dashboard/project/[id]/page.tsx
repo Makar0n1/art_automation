@@ -18,15 +18,10 @@ import {
   Rocket,
   FileText,
   Link as LinkIcon,
-  Settings2,
 } from 'lucide-react';
 
 import {
   Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-  CardFooter,
   Button,
   Input,
   TextArea,
@@ -36,6 +31,7 @@ import {
   Badge,
   ProgressBar,
 } from '@/components/ui';
+import { ModelSelector } from '@/components/ModelSelector';
 import { projectsApi, generationsApi, apiKeysApi } from '@/lib/api';
 import { Project, Generation, ArticleType, LinkDisplayType, LinkPosition, GenerationStatus } from '@/types';
 import { formatRelativeTime, getStatusLabel, cn } from '@/lib/utils';
@@ -50,6 +46,7 @@ const generationSchema = z.object({
   comment: z.string().optional(),
   minWords: z.number().min(500).max(5000),
   maxWords: z.number().min(700).max(8000),
+  model: z.string(),
   linksAsList: z.boolean(),
   linksListPosition: z.string().optional(),
   internalLinks: z.array(z.object({
@@ -131,6 +128,7 @@ export default function ProjectPage() {
     handleSubmit,
     watch,
     reset,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<GenerationFormData>({
     resolver: zodResolver(generationSchema),
@@ -140,6 +138,7 @@ export default function ProjectPage() {
       region: 'us',
       minWords: 1200,
       maxWords: 1800,
+      model: 'openai/gpt-5.2',
       linksAsList: false,
       internalLinks: [],
     },
@@ -227,6 +226,7 @@ export default function ProjectPage() {
         comment: data.comment,
         minWords: data.minWords,
         maxWords: data.maxWords,
+        model: data.model,
         internalLinks: data.internalLinks,
         linksAsList: data.linksAsList,
         linksListPosition: data.linksListPosition,
@@ -274,10 +274,20 @@ export default function ProjectPage() {
     }
   };
 
+  /** Status → left-stripe colour for generation rows */
+  const statusStripeColor = (status: GenerationStatus) => {
+    switch (status) {
+      case GenerationStatus.COMPLETED: return 'bg-emerald-400';
+      case GenerationStatus.FAILED: return 'bg-red-400';
+      case GenerationStatus.QUEUED: return 'bg-gray-300 dark:bg-gray-600';
+      default: return 'bg-blue-400';
+    }
+  };
+
   if (isLoading) {
     return (
-      <div className="animate-pulse space-y-6">
-        <div className="h-8 w-64 rounded bg-gray-200 dark:bg-gray-700" />
+      <div className="flex h-full flex-col gap-3">
+        <div className="h-7 w-64 rounded bg-gray-200 dark:bg-gray-700" />
         <div className="h-40 rounded-xl bg-gray-200 dark:bg-gray-700" />
       </div>
     );
@@ -288,27 +298,28 @@ export default function ProjectPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="noise-bg flex h-full flex-col gap-3">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center justify-between">
+        <div className="flex items-center gap-3">
           <Link href="/dashboard/projects">
             <Button variant="ghost" size="sm">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
           <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
+            <h1 className="header-underline text-2xl font-bold text-gray-900 dark:text-white">
               {project.name}
             </h1>
             {project.description && (
-              <p className="mt-1 text-gray-600 dark:text-gray-400">
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
                 {project.description}
               </p>
             )}
           </div>
         </div>
         <Button
+          size="sm"
           leftIcon={<Rocket className="h-4 w-4" />}
           onClick={() => setIsFormOpen(true)}
         >
@@ -317,45 +328,59 @@ export default function ProjectPage() {
       </div>
 
       {/* Generations List */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
+      <Card className="card-shine flex min-h-0 flex-1 flex-col overflow-hidden !p-0">
+        <div className="flex shrink-0 items-center gap-2 border-b border-gray-100/60 px-4 py-3 dark:border-gray-700/30">
+          <FileText className="h-4 w-4 text-gray-500" />
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">
             Generations ({project.generations?.length || 0})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {!project.generations?.length ? (
-            <div className="py-12 text-center">
-              <Rocket className="mx-auto h-16 w-16 text-gray-300 dark:text-gray-600" />
-              <h3 className="mt-4 text-lg font-medium text-gray-900 dark:text-white">
+          </span>
+        </div>
+
+        {!project.generations?.length ? (
+          <div className="flex flex-1 items-center justify-center py-12 text-center">
+            <div>
+              <Rocket className="mx-auto h-14 w-14 text-gray-300 dark:text-gray-600" />
+              <h3 className="mt-3 text-base font-medium text-gray-900 dark:text-white">
                 No generations yet
               </h3>
-              <p className="mt-2 text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                 Start your first article generation in this project
               </p>
               <Button
-                className="mt-6"
+                size="sm"
+                className="mt-4"
                 leftIcon={<Rocket className="h-4 w-4" />}
                 onClick={() => setIsFormOpen(true)}
               >
                 Start First Generation
               </Button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {project.generations.map((gen) => (
-                <div
-                  key={gen._id}
-                  className="rounded-lg border border-gray-100 p-4 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50"
-                >
-                  <div className="flex items-center justify-between">
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto">
+            <div className="divide-y divide-gray-100/60 dark:divide-gray-700/30">
+              {project.generations.map((gen) => {
+                const isActive = gen.status !== GenerationStatus.COMPLETED
+                  && gen.status !== GenerationStatus.FAILED
+                  && gen.status !== GenerationStatus.QUEUED;
+
+                return (
+                  <div
+                    key={gen._id}
+                    className={cn(
+                      'group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-gray-50/80 dark:hover:bg-gray-700/30',
+                      isActive && 'active-glow'
+                    )}
+                  >
+                    {/* Status stripe */}
+                    <div className={cn('h-8 w-1 shrink-0 rounded-full', statusStripeColor(gen.status))} />
+
                     <Link
                       href={`/dashboard/generation/${gen._id}`}
                       className="flex-1 min-w-0"
                     >
-                      <div className="flex items-center gap-3">
-                        <h4 className="truncate font-medium text-gray-900 dark:text-white">
+                      <div className="flex items-center gap-2">
+                        <h4 className="truncate text-sm font-medium text-gray-900 dark:text-white">
                           {gen.config.mainKeyword}
                         </h4>
                         <Badge
@@ -373,38 +398,32 @@ export default function ProjectPage() {
                           {getStatusLabel(gen.status)}
                         </Badge>
                       </div>
-                      <div className="mt-1 flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+                      <div className="mt-0.5 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                         <span>{gen.config.articleType}</span>
                         <span>{gen.config.language.toUpperCase()}</span>
                         <span>{formatRelativeTime(gen.createdAt)}</span>
                       </div>
                     </Link>
-                    <div className="flex items-center gap-2 ml-4">
-                      {gen.status !== GenerationStatus.COMPLETED &&
-                        gen.status !== GenerationStatus.FAILED &&
-                        gen.status !== GenerationStatus.QUEUED && (
-                          <div className="w-32">
-                            <ProgressBar value={gen.progress} size="sm" />
-                          </div>
-                        )}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteGenerationId(gen._id);
-                        }}
-                        className="text-gray-400 hover:text-red-500"
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      {isActive && (
+                        <div className="w-28">
+                          <ProgressBar value={gen.progress} size="sm" />
+                        </div>
+                      )}
+                      <button
+                        onClick={() => setDeleteGenerationId(gen._id)}
+                        className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-          )}
-        </CardContent>
+          </div>
+        )}
       </Card>
 
       {/* Generation Form Modal */}
@@ -470,28 +489,35 @@ export default function ProjectPage() {
               {...register('comment')}
             />
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Word Count Range
-              </label>
-              <div className="flex items-center gap-3">
-                <Input
-                  type="number"
-                  placeholder="Min"
-                  error={errors.minWords?.message}
-                  {...register('minWords', { valueAsNumber: true })}
-                  className="w-28"
-                />
-                <span className="text-gray-400">—</span>
-                <Input
-                  type="number"
-                  placeholder="Max"
-                  error={errors.maxWords?.message}
-                  {...register('maxWords', { valueAsNumber: true })}
-                  className="w-28"
-                />
-                <span className="text-xs text-gray-500 dark:text-gray-400">words</span>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Word Count Range
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    placeholder="Min"
+                    error={errors.minWords?.message}
+                    {...register('minWords', { valueAsNumber: true })}
+                    className="w-28"
+                  />
+                  <span className="text-gray-400">—</span>
+                  <Input
+                    type="number"
+                    placeholder="Max"
+                    error={errors.maxWords?.message}
+                    {...register('maxWords', { valueAsNumber: true })}
+                    className="w-28"
+                  />
+                  <span className="text-xs text-gray-500 dark:text-gray-400">words</span>
+                </div>
               </div>
+              <ModelSelector
+                label="AI Model"
+                value={watch('model')}
+                onChange={(modelId) => setValue('model', modelId)}
+              />
             </div>
           </div>
 
@@ -535,7 +561,7 @@ export default function ProjectPage() {
                 </div>
 
                 {fields.map((field, index) => (
-                  <Card key={field.id} className="p-4">
+                  <Card key={field.id} className="card-shine p-4">
                     <div className="flex items-start gap-4">
                       <LinkIcon className="mt-2 h-5 w-5 text-gray-400" />
                       <div className="flex-1 space-y-3">
@@ -594,7 +620,7 @@ export default function ProjectPage() {
             )}
           </div>
 
-          <ModalFooter className="sticky bottom-0 bg-white dark:bg-gray-800 pt-4 border-t">
+          <ModalFooter className="sticky bottom-0 bg-white dark:bg-gray-800 pt-4 border-t border-gray-100/60 dark:border-gray-700/30">
             <Button
               type="button"
               variant="secondary"

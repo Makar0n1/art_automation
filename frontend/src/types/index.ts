@@ -114,6 +114,7 @@ export interface GenerationConfig {
   linksListPosition?: LinkPosition;
   minWords?: number;
   maxWords?: number;
+  model?: string;
 }
 
 export interface GenerationLog {
@@ -201,4 +202,16 @@ export interface QueueStats {
   active: number;
   completed: number;
   failed: number;
+}
+
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  description: string;
+  pricing?: {
+    prompt: string;
+    completion: string;
+  };
+  contextLength?: number;
+  maxCompletionTokens?: number;
 }

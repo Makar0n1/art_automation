@@ -141,6 +141,11 @@ export const apiKeysApi = {
     const response = await api.post<ApiResponse>('/settings/api-keys/firecrawl/test');
     return response.data;
   },
+
+  getOpenRouterModels: async () => {
+    const response = await api.get<ApiResponse>('/settings/api-keys/openrouter/models');
+    return response.data;
+  },
 };
 
 /**
@@ -213,6 +218,7 @@ export const generationsApi = {
     linksListPosition?: string;
     minWords?: number;
     maxWords?: number;
+    model?: string;
   }) => {
     const response = await api.post<ApiResponse>(`/projects/${projectId}/generations`, config);
     return response.data;
@@ -223,8 +229,8 @@ export const generationsApi = {
     return response.data;
   },
 
-  restart: async (id: string) => {
-    const response = await api.post<ApiResponse>(`/generations/${id}/restart`);
+  restart: async (id: string, model?: string) => {
+    const response = await api.post<ApiResponse>(`/generations/${id}/restart`, model ? { model } : {});
     return response.data;
   },
 

@@ -33,3 +33,6 @@ Thumbs.db
 # Docker local data (not in deploy/)
 mongodb_data/
 redis_data/
+
+# Mock frontend (design-only copy)
+frontend-mock/

@@ -10,6 +10,7 @@ import {
   verifyPin,
   updateOpenRouter,
   testOpenRouter,
+  getOpenRouterModels,
   updateSupabase,
   testSupabase,
   updateFirecrawl,
@@ -51,6 +52,12 @@ router.put('/openrouter', updateOpenRouter);
  * Test OpenRouter API key
  */
 router.post('/openrouter/test', testOpenRouter);
+
+/**
+ * GET /api/settings/api-keys/openrouter/models
+ * Get available OpenRouter models for generation
+ */
+router.get('/openrouter/models', getOpenRouterModels);
 
 /**
  * PUT /api/settings/api-keys/supabase

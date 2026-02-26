@@ -1,5 +1,5 @@
 /**
- * Account Settings Page - Password & PIN Management
+ * Account Settings Page - Password & PIN Management — dashboard visual style
  */
 
 'use client';
@@ -8,7 +8,6 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import toast from 'react-hot-toast';
 import {
-  User,
   Lock,
   Shield,
   Eye,
@@ -20,11 +19,7 @@ import {
 
 import {
   Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
   CardContent,
-  CardFooter,
   Button,
   Input,
   Badge,
@@ -62,20 +57,11 @@ export default function AccountPage() {
   });
 
   const passwordForm = useForm<PasswordFormData>({
-    defaultValues: {
-      currentPassword: '',
-      newPassword: '',
-      confirmPassword: '',
-    },
+    defaultValues: { currentPassword: '', newPassword: '', confirmPassword: '' },
   });
 
   const pinForm = useForm<PinFormData>({
-    defaultValues: {
-      currentPin: '',
-      newPin: '',
-      confirmPin: '',
-      password: '',
-    },
+    defaultValues: { currentPin: '', newPin: '', confirmPin: '', password: '' },
   });
 
   const fetchPinStatus = async () => {
@@ -96,40 +82,18 @@ export default function AccountPage() {
   }, []);
 
   const handlePasswordChange = async (data: PasswordFormData) => {
-    if (data.newPassword !== data.confirmPassword) {
-      toast.error('New passwords do not match');
-      return;
-    }
-
-    if (data.newPassword.length < 6) {
-      toast.error('Password must be at least 6 characters');
-      return;
-    }
-
+    if (data.newPassword !== data.confirmPassword) { toast.error('New passwords do not match'); return; }
+    if (data.newPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     try {
       const response = await authApi.changePassword(data.currentPassword, data.newPassword);
-      if (response.success) {
-        toast.success('Password changed successfully');
-        passwordForm.reset();
-      } else {
-        toast.error(response.error || 'Failed to change password');
-      }
-    } catch (error) {
-      toast.error('Failed to change password');
-    }
+      if (response.success) { toast.success('Password changed successfully'); passwordForm.reset(); }
+      else toast.error(response.error || 'Failed to change password');
+    } catch { toast.error('Failed to change password'); }
   };
 
   const handlePinChange = async (data: PinFormData) => {
-    if (data.newPin !== data.confirmPin) {
-      toast.error('PINs do not match');
-      return;
-    }
-
-    if (data.newPin.length < 4) {
-      toast.error('PIN must be at least 4 characters');
-      return;
-    }
-
+    if (data.newPin !== data.confirmPin) { toast.error('PINs do not match'); return; }
+    if (data.newPin.length < 4) { toast.error('PIN must be at least 4 characters'); return; }
     try {
       const response = await authApi.changePin(
         data.newPin,
@@ -137,194 +101,131 @@ export default function AccountPage() {
         !hasPinConfigured ? data.password : undefined
       );
       if (response.success) {
-        toast.success(hasPinConfigured ? 'PIN changed successfully' : 'PIN set up successfully');
+        toast.success(hasPinConfigured ? 'PIN changed' : 'PIN set up');
         pinForm.reset();
         setHasPinConfigured(true);
-      } else {
-        toast.error(response.error || 'Failed to change PIN');
-      }
-    } catch (error) {
-      toast.error('Failed to change PIN');
-    }
+      } else toast.error(response.error || 'Failed to change PIN');
+    } catch { toast.error('Failed to change PIN'); }
   };
+
+  const PasswordToggle = ({ field, show, toggle }: { field: string; show: boolean; toggle: () => void }) => (
+    <button
+      type="button"
+      className="absolute bottom-2 right-2 flex items-center justify-center text-gray-400 hover:text-gray-600"
+      onClick={toggle}
+    >
+      {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+    </button>
+  );
 
   if (isLoading) {
     return (
-      <div className="animate-pulse space-y-6">
-        <div className="h-8 w-48 rounded bg-gray-200 dark:bg-gray-700" />
-        {[...Array(2)].map((_, i) => (
-          <div key={i} className="h-64 rounded-xl bg-gray-200 dark:bg-gray-700" />
-        ))}
+      <div className="flex h-full flex-col gap-3">
+        <div className="h-7 w-48 rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="grid flex-1 grid-cols-2 gap-3">
+          <div className="rounded-xl bg-gray-200 dark:bg-gray-700" />
+          <div className="rounded-xl bg-gray-200 dark:bg-gray-700" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-          Account Settings
-        </h1>
-        <p className="mt-1 text-gray-600 dark:text-gray-400">
-          Manage your password and security settings
+    <div className="noise-bg flex h-full flex-col gap-3">
+      {/* Header with profile info merged */}
+      <div className="shrink-0">
+        <h1 className="header-underline text-2xl font-bold text-gray-900 dark:text-white">Account</h1>
+        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+          {user?.email} &mdash; Administrator
         </p>
       </div>
 
-      {/* User Info */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <User className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+      {/* Password & PIN side by side */}
+      <div className="grid min-h-0 flex-1 grid-cols-2 gap-3">
+        {/* Change Password */}
+        <Card className="card-shine flex flex-col overflow-hidden !p-4">
+          <div className="mb-3 flex items-center gap-2.5 shrink-0">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
+              <Lock className="h-4 w-4 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
-              <CardTitle>Profile</CardTitle>
-              <CardDescription>Your account information</CardDescription>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">Change Password</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Update your account password</p>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">Email</p>
-            <p className="font-medium text-gray-900 dark:text-white">{user?.email}</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Password & PIN Row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Change Password */}
-        <Card className="flex flex-col">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                <Lock className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div>
-                <CardTitle>Change Password</CardTitle>
-                <CardDescription>Update your account password</CardDescription>
-              </div>
+          <form onSubmit={passwordForm.handleSubmit(handlePasswordChange)} className="flex flex-1 flex-col space-y-3">
+            <div className="relative">
+              <Input
+                label="Current Password"
+                type={showPasswords.current ? 'text' : 'password'}
+                placeholder="Enter current password"
+                {...passwordForm.register('currentPassword', { required: true })}
+                className="pr-10"
+              />
+              <PasswordToggle field="current" show={showPasswords.current} toggle={() => setShowPasswords((s) => ({ ...s, current: !s.current }))} />
             </div>
-          </CardHeader>
-          <CardContent className="flex-1">
-            <form onSubmit={passwordForm.handleSubmit(handlePasswordChange)} className="space-y-4">
-              <div className="relative">
-                <Input
-                  label="Current Password"
-                  type={showPasswords.current ? 'text' : 'password'}
-                  placeholder="Enter current password"
-                  {...passwordForm.register('currentPassword', { required: true })}
-                  className="pr-12"
-                />
-                <button
-                  type="button"
-                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                  onClick={() => setShowPasswords((s) => ({ ...s, current: !s.current }))}
-                >
-                  {showPasswords.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-
-              <div className="relative">
-                <Input
-                  label="New Password"
-                  type={showPasswords.new ? 'text' : 'password'}
-                  placeholder="Enter new password (min 6 characters)"
-                  {...passwordForm.register('newPassword', { required: true, minLength: 6 })}
-                  className="pr-12"
-                />
-                <button
-                  type="button"
-                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                  onClick={() => setShowPasswords((s) => ({ ...s, new: !s.new }))}
-                >
-                  {showPasswords.new ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-
-              <div className="relative">
-                <Input
-                  label="Confirm New Password"
-                  type={showPasswords.confirm ? 'text' : 'password'}
-                  placeholder="Confirm new password"
-                  {...passwordForm.register('confirmPassword', { required: true })}
-                  className="pr-12"
-                />
-                <button
-                  type="button"
-                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                  onClick={() => setShowPasswords((s) => ({ ...s, confirm: !s.confirm }))}
-                >
-                  {showPasswords.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
-            </form>
-          </CardContent>
-          <CardFooter className="justify-end">
-            <Button
-              className="min-w-[160px]"
-              onClick={passwordForm.handleSubmit(handlePasswordChange)}
-              disabled={passwordForm.formState.isSubmitting}
-              leftIcon={
-                passwordForm.formState.isSubmitting ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Lock className="h-4 w-4" />
-                )
-              }
-            >
-              Change Password
-            </Button>
-          </CardFooter>
+            <div className="relative">
+              <Input
+                label="New Password"
+                type={showPasswords.new ? 'text' : 'password'}
+                placeholder="Min 6 characters"
+                {...passwordForm.register('newPassword', { required: true, minLength: 6 })}
+                className="pr-10"
+              />
+              <PasswordToggle field="new" show={showPasswords.new} toggle={() => setShowPasswords((s) => ({ ...s, new: !s.new }))} />
+            </div>
+            <div className="relative">
+              <Input
+                label="Confirm"
+                type={showPasswords.confirm ? 'text' : 'password'}
+                placeholder="Confirm new password"
+                {...passwordForm.register('confirmPassword', { required: true })}
+                className="pr-10"
+              />
+              <PasswordToggle field="confirm" show={showPasswords.confirm} toggle={() => setShowPasswords((s) => ({ ...s, confirm: !s.confirm }))} />
+            </div>
+            <div className="!mt-auto flex justify-end pt-2">
+              <Button
+                size="sm"
+                onClick={passwordForm.handleSubmit(handlePasswordChange)}
+                disabled={passwordForm.formState.isSubmitting}
+                leftIcon={passwordForm.formState.isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
+              >
+                Change Password
+              </Button>
+            </div>
+          </form>
         </Card>
 
         {/* PIN Management */}
-        <Card className="flex flex-col">
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
-              <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <CardTitle>Security PIN</CardTitle>
-              <CardDescription>
-                {hasPinConfigured
-                  ? 'Your PIN protects API key changes'
-                  : 'Set up a PIN to protect API key changes'}
-              </CardDescription>
-            </div>
-          </div>
-          {hasPinConfigured ? (
-            <Badge variant="success">
-              <Check className="mr-1 h-3 w-3" />
-              Configured
-            </Badge>
-          ) : (
-            <Badge variant="warning">
-              <AlertTriangle className="mr-1 h-3 w-3" />
-              Not Set
-            </Badge>
-          )}
-        </CardHeader>
-        <CardContent className="flex-1">
-          {!hasPinConfigured && (
-            <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                    PIN not configured
-                  </p>
-                  <p className="text-sm text-amber-700 dark:text-amber-400">
-                    Set up a PIN to add an extra layer of security for API key changes.
-                  </p>
-                </div>
+        <Card className="card-shine flex flex-col overflow-hidden !p-4">
+          <div className="mb-3 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                <Shield className="h-4 w-4 text-amber-600 dark:text-amber-400" />
               </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900 dark:text-white">Security PIN</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  {hasPinConfigured ? 'Protects API key changes' : 'Set up to protect API keys'}
+                </p>
+              </div>
+            </div>
+            {hasPinConfigured ? (
+              <Badge variant="success" size="sm"><Check className="mr-1 h-3 w-3" />Active</Badge>
+            ) : (
+              <Badge variant="warning" size="sm"><AlertTriangle className="mr-1 h-3 w-3" />Not Set</Badge>
+            )}
+          </div>
+
+          {!hasPinConfigured && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              Set up a PIN to secure API key changes
             </div>
           )}
 
-          <form onSubmit={pinForm.handleSubmit(handlePinChange)} className="space-y-4">
+          <form onSubmit={pinForm.handleSubmit(handlePinChange)} className="flex flex-1 flex-col space-y-3">
             {hasPinConfigured ? (
               <div className="relative">
                 <Input
@@ -332,32 +233,20 @@ export default function AccountPage() {
                   type={showPins.current ? 'text' : 'password'}
                   placeholder="Enter current PIN"
                   {...pinForm.register('currentPin', { required: hasPinConfigured })}
-                  className="pr-12"
+                  className="pr-10"
                 />
-                <button
-                  type="button"
-                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                  onClick={() => setShowPins((s) => ({ ...s, current: !s.current }))}
-                >
-                  {showPins.current ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+                <PasswordToggle field="current" show={showPins.current} toggle={() => setShowPins((s) => ({ ...s, current: !s.current }))} />
               </div>
             ) : (
               <div className="relative">
                 <Input
                   label="Account Password"
                   type={showPins.password ? 'text' : 'password'}
-                  placeholder="Enter your account password to set up PIN"
+                  placeholder="Enter password to set up PIN"
                   {...pinForm.register('password', { required: !hasPinConfigured })}
-                  className="pr-12"
+                  className="pr-10"
                 />
-                <button
-                  type="button"
-                  className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                  onClick={() => setShowPins((s) => ({ ...s, password: !s.password }))}
-                >
-                  {showPins.password ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+                <PasswordToggle field="password" show={showPins.password} toggle={() => setShowPins((s) => ({ ...s, password: !s.password }))} />
               </div>
             )}
 
@@ -365,20 +254,11 @@ export default function AccountPage() {
               <Input
                 label={hasPinConfigured ? 'New PIN' : 'PIN'}
                 type={showPins.new ? 'text' : 'password'}
-                placeholder="Enter PIN (min 4 characters)"
-                {...pinForm.register('newPin', {
-                  required: true,
-                  minLength: 4,
-                })}
-                className="pr-12"
+                placeholder="Min 4 characters"
+                {...pinForm.register('newPin', { required: true, minLength: 4 })}
+                className="pr-10"
               />
-              <button
-                type="button"
-                className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                onClick={() => setShowPins((s) => ({ ...s, new: !s.new }))}
-              >
-                {showPins.new ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
+              <PasswordToggle field="new" show={showPins.new} toggle={() => setShowPins((s) => ({ ...s, new: !s.new }))} />
             </div>
 
             <div className="relative">
@@ -387,60 +267,30 @@ export default function AccountPage() {
                 type={showPins.confirm ? 'text' : 'password'}
                 placeholder="Confirm PIN"
                 {...pinForm.register('confirmPin', { required: true })}
-                className="pr-12"
+                className="pr-10"
               />
-              <button
-                type="button"
-                className="absolute right-2 top-[26px] bottom-0 flex items-center justify-center w-10 text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-                onClick={() => setShowPins((s) => ({ ...s, confirm: !s.confirm }))}
-              >
-                {showPins.confirm ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-              </button>
+              <PasswordToggle field="confirm" show={showPins.confirm} toggle={() => setShowPins((s) => ({ ...s, confirm: !s.confirm }))} />
             </div>
 
+            <div className="!mt-auto flex items-center justify-between gap-4 pt-2">
+              <p className="text-xs text-gray-400">Min 4 chars, letters/numbers/symbols</p>
+              <Button
+                size="sm"
+                onClick={pinForm.handleSubmit(handlePinChange)}
+                disabled={pinForm.formState.isSubmitting}
+                leftIcon={pinForm.formState.isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+              >
+                {hasPinConfigured ? 'Change PIN' : 'Set Up PIN'}
+              </Button>
+            </div>
           </form>
-        </CardContent>
-        <CardFooter className="justify-between items-center">
-          <p className="text-sm text-gray-500 dark:text-gray-400 flex-1 mr-4">
-            PIN must be at least 4 characters (letters, numbers, symbols allowed). This PIN will be required when changing API keys.
-          </p>
-          <Button
-            className="min-w-[160px]"
-            onClick={pinForm.handleSubmit(handlePinChange)}
-            disabled={pinForm.formState.isSubmitting}
-            leftIcon={
-              pinForm.formState.isSubmitting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Shield className="h-4 w-4" />
-              )
-            }
-          >
-            {hasPinConfigured ? 'Change PIN' : 'Set Up PIN'}
-          </Button>
-        </CardFooter>
-      </Card>
+        </Card>
       </div>
 
-      {/* Security Info */}
-      <Card className="bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800">
-        <CardContent className="py-4">
-          <div className="flex items-start gap-3">
-            <Shield className="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-400" />
-            <div>
-              <p className="font-medium text-blue-900 dark:text-blue-300">
-                Security Best Practices
-              </p>
-              <ul className="mt-2 text-sm text-blue-700 dark:text-blue-400 list-disc list-inside space-y-1">
-                <li>Use a strong password with at least 6 characters</li>
-                <li>Choose a unique PIN that you don&apos;t use elsewhere</li>
-                <li>Never share your password or PIN with anyone</li>
-                <li>Change your credentials periodically</li>
-              </ul>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Security tip */}
+      <p className="shrink-0 text-center text-xs text-gray-400 dark:text-gray-500">
+        Use strong, unique credentials. Never share your password or PIN.
+      </p>
     </div>
   );
 }
