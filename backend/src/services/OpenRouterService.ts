@@ -686,27 +686,21 @@ IMPORTANT:
         break;
 
       case 'faq':
-        blockTypeInstructions = `Generate a DYNAMIC FAQ section based on the full article above.
+        blockTypeInstructions = `Generate EXACTLY 4 FAQ items. NO MORE THAN 4. NO LESS THAN 4.
 
-YOUR TASK: Read through the entire article and identify:
-1. Questions a reader would STILL have after reading — gaps, unclear points, practical concerns
-2. Important details that were mentioned briefly but deserve more explanation
-3. Common misconceptions or concerns the target audience typically has
-
-Generate as MANY FAQ items as genuinely needed — typically 4-8, but could be more if the topic demands it.
+Read through the article above and pick the 4 MOST important unanswered questions a reader would have.
 
 Format each as:
 **Q: [Short practical question]**
-A: [Informative answer - 2-3 sentences, with specific details/data where possible]
+A: [Concise answer — 1-2 sentences, 30-50 words max]
 
 RULES:
-- Questions must be SHORT and practical (what real people actually google)
-- Answers should ADD VALUE — bring new detail, clarify a nuance, or give a concrete recommendation
-- Do NOT repeat what's already thoroughly covered in the article
-- Each answer: 30-60 words, specific and useful
-- Questions should complement the article, not duplicate it`;
-        // Dynamic: scale FAQ estimated words based on article length
-        estimatedWords = Math.round(targetWordCount * 0.12);
+- EXACTLY 4 items — count them before responding
+- Questions must be SHORT and practical (what real people google)
+- Answers must be CONCISE — 1-2 sentences, no more
+- Each answer adds NEW value — don't repeat what the article already covers
+- Total FAQ section: 200-250 words maximum`;
+        estimatedWords = 220;
         break;
     }
 
@@ -929,31 +923,36 @@ Write the content now:`;
     switch (link.displayType) {
       case 'inline':
         if (link.isAnchorless) {
-          insertionInstruction = `Insert this link INLINE into the text. Find a natural place to add a phrase like "Learn more at ${linkMarkdown}" or "Details available at ${linkMarkdown}". The link must flow grammatically within or after an existing sentence. Do NOT use quotes around the link. Do NOT add "See also" or similar headings.`;
+          insertionInstruction = `Insert this link INLINE into an EXISTING sentence or at the end of an existing paragraph. Add a phrase like "Learn more at ${linkMarkdown}" or "Details available at ${linkMarkdown}".
+
+CRITICAL: The link must be PART OF A PARAGRAPH — within or appended to an existing sentence.
+ABSOLUTELY FORBIDDEN: Placing the link on its own separate line. The link must NEVER appear as a standalone line.`;
         } else {
           insertionInstruction = `Insert this link INLINE into the text.
 
 The anchor phrase is: "${link.anchor}"
 
-YOUR TASK: Rewrite ONE existing sentence so the link fits grammatically. The anchor text INSIDE the brackets [${link.anchor}] must stay EXACTLY as-is, but you MUST add proper grammar OUTSIDE the brackets.
+YOUR TASK: Pick ONE existing sentence and REWRITE it so the anchor phrase becomes a grammatical part of that sentence. The anchor text INSIDE the brackets [${link.anchor}] must stay EXACTLY as-is, but you MUST add proper grammar OUTSIDE the brackets.
 
 EXAMPLES of CORRECT insertion in German:
 - Anchor "Ghostwriter Bachelorarbeit" → "...eine professionelle [Ghostwriter Bachelorarbeit](url) kann dabei helfen..."
-- Anchor "Ghostwriter Bachelorarbeit" → "...wer sich für eine [Ghostwriter Bachelorarbeit](url) interessiert, sollte..."
-- Anchor "SEO Texte" → "...hochwertige [SEO Texte](url) sind entscheidend für..."
+- Anchor "Mia Müller" → "...wie die Expertin [Mia Müller](url) betont, ist dabei entscheidend..."
+- Anchor "Ghostwriting Agentur" → "...bei der Wahl einer [Ghostwriting Agentur](url) sollten Sie auf Transparenz achten..."
 
-EXAMPLES of WRONG insertion (FORBIDDEN):
-- "...Begriffe wie [Ghostwriter Bachelorarbeit](url)..." ← treats anchor as a search term
-- "...auf Seiten wie [Ghostwriter Bachelorarbeit](url)..." ← treats as website name
-- "...bei [Ghostwriter Bachelorarbeit](url) findest du..." ← no article, wrong grammar
+EXAMPLES of WRONG insertion (ABSOLUTELY FORBIDDEN):
+- Placing the link on its OWN LINE between paragraphs ← THIS IS THE #1 ERROR, NEVER DO THIS
+- "[anchor](url)" as a standalone line ← NEVER
+- "...Begriffe wie [anchor](url)..." ← treats anchor as a search term
+- "...auf Seiten wie [anchor](url)..." ← treats as website name
 - "...Mehr Infos: [anchor](url)" ← label style, not prose
 
 RULES:
+- The link MUST be INSIDE an existing paragraph, woven into a sentence
 - Add correct articles, prepositions, case endings AROUND the link as ${langName} grammar requires
 - The link must read as a natural noun phrase in the sentence (subject, object, attribute, etc.)
 - The reader should NOT notice it's a link — it reads as normal text
-- Change ONLY ONE sentence. Keep the rest of the content identical.
-- No quotes around the link`;
+- Change ONLY ONE sentence. Keep the rest of the content identical
+- NEVER place the link on a separate blank line — it must be part of running text`;
         }
         break;
       case 'list_start':
@@ -1022,6 +1021,45 @@ Return the updated content with the link inserted:`;
         }
       } else {
         logger.debug(`Link verified in response: ${link.url}`);
+      }
+
+      // Post-processing: detect standalone link lines (AI's #1 error)
+      // A standalone link line = a line that is ONLY a markdown link with nothing else
+      if (link.displayType === 'inline') {
+        const lines = updatedContent.split('\n');
+        const standaloneRegex = /^\s*\[[^\]]+\]\([^)]+\)\s*$/;
+        let fixed = false;
+        for (let i = 0; i < lines.length; i++) {
+          if (standaloneRegex.test(lines[i]) && lines[i].includes(link.url)) {
+            // Found standalone link line — merge it into the previous paragraph
+            logger.warn(`Detected standalone link line, merging into previous paragraph: ${lines[i].trim()}`);
+            // Find previous non-empty line
+            let prevIdx = i - 1;
+            while (prevIdx >= 0 && lines[prevIdx].trim() === '') prevIdx--;
+            if (prevIdx >= 0) {
+              // Append link to end of previous paragraph's last sentence
+              const prevLine = lines[prevIdx].trimEnd();
+              const needsSpace = !prevLine.endsWith(' ');
+              lines[prevIdx] = prevLine.replace(/([.!?])\s*$/, (_m, punct) => {
+                return ` – ${lines[i].trim()}${punct}`;
+              });
+              // If no punctuation replacement happened, just append
+              if (lines[prevIdx] === prevLine) {
+                lines[prevIdx] = prevLine + (needsSpace ? ' ' : '') + lines[i].trim();
+              }
+            }
+            lines.splice(i, 1);
+            // Also remove blank line before it if exists
+            if (i > 0 && lines[i - 1]?.trim() === '') {
+              lines.splice(i - 1, 1);
+            }
+            fixed = true;
+            break;
+          }
+        }
+        if (fixed) {
+          updatedContent = lines.join('\n');
+        }
       }
 
       return updatedContent;

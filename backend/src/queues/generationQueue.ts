@@ -163,12 +163,25 @@ const calcProgress = (stepNumber: number, stepProgress: number = 0): number => {
 };
 
 /**
- * Strip any markdown heading from the beginning of content
+ * Strip any heading from the beginning of content
  * Fixes issue where AI sometimes includes heading despite instructions not to
+ * Handles both markdown headings (## Title) and plain text headings (Title\n\n)
  */
-const stripLeadingHeading = (content: string): string => {
+const stripLeadingHeading = (content: string, blockHeading?: string): string => {
   // Remove any leading markdown heading (# ## ### etc.) from the start
-  return content.replace(/^#{1,6}\s+[^\n]+\n+/, '').trim();
+  let cleaned = content.replace(/^#{1,6}\s+[^\n]+\n+/, '').trim();
+
+  // Also remove plain text heading that matches the block heading (AI duplicate bug)
+  if (blockHeading && blockHeading.trim()) {
+    const headingText = blockHeading.trim();
+    // Check if content starts with the heading text (exact match on first line)
+    const firstLine = cleaned.split('\n')[0].trim();
+    if (firstLine === headingText) {
+      cleaned = cleaned.substring(cleaned.indexOf('\n') + 1).trim();
+    }
+  }
+
+  return cleaned;
 };
 
 /**
@@ -863,7 +876,7 @@ export const startQueueProcessor = () => {
       // Build final article text (strip any duplicate headings AI might have included)
       let finalArticle = '';
       for (const block of updatedBlocks) {
-        const cleanContent = stripLeadingHeading(block.content || '');
+        const cleanContent = stripLeadingHeading(block.content || '', block.heading);
         if (block.type === 'h1') {
           finalArticle += `# ${cleanContent}\n\n`;
         } else if (block.type === 'intro') {
@@ -1035,7 +1048,7 @@ export const startQueueProcessor = () => {
         // Rebuild final article with links
         let finalArticleWithLinks = '';
         for (const block of updatedBlocksWithLinks) {
-          const cleanContent = stripLeadingHeading(block.content || '');
+          const cleanContent = stripLeadingHeading(block.content || '', block.heading);
           if (block.type === 'h1') {
             finalArticleWithLinks += `# ${cleanContent}\n\n`;
           } else if (block.type === 'intro') {
@@ -1405,7 +1418,7 @@ export const startQueueProcessor = () => {
         // Assemble final article
         let finalReviewedArticle = '';
         for (const block of reviewedBlocks) {
-          const cleanContent = stripLeadingHeading(block.content || '');
+          const cleanContent = stripLeadingHeading(block.content || '', block.heading);
           if (block.type === 'h1') {
             finalReviewedArticle += `# ${cleanContent}\n\n`;
           } else if (block.type === 'intro') {

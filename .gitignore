@@ -36,3 +36,4 @@ redis_data/
 
 # Mock frontend (design-only copy)
 frontend-mock/
+complete-articles/
