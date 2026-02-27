@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 import {
   Card,
@@ -530,21 +531,21 @@ export default function GenerationPage() {
               <div className="flex-1 overflow-y-auto px-3 py-2">
                 {blocksWithContent.length > 0 ? (
                   /* Block-by-block rendering — supports click-to-scroll from Structure */
-                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-2 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">
                     {blocksWithContent.map(block => (
                       <section
                         key={block.id}
                         id={`article-block-${block.id}`}
                         className="scroll-mt-2 transition-[box-shadow,border-radius] duration-500"
                       >
-                        <ReactMarkdown>{getBlockMarkdown(block)}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{getBlockMarkdown(block)}</ReactMarkdown>
                       </section>
                     ))}
                   </div>
                 ) : (generation.generatedArticle || generation.article) ? (
                   /* Fallback: full assembled article */
-                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
-                    <ReactMarkdown>{generation.generatedArticle || generation.article || ''}</ReactMarkdown>
+                  <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-2 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{generation.generatedArticle || generation.article || ''}</ReactMarkdown>
                   </div>
                 ) : (
                   /* Empty placeholder */
@@ -704,8 +705,8 @@ export default function GenerationPage() {
 
           {/* Scrollable article body — full width */}
           <div className="mt-3 flex-1 min-h-0 overflow-y-auto rounded-lg border border-gray-100 bg-white px-4 py-4 dark:border-gray-700 dark:bg-gray-800/50">
-            <div className="prose prose-base max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h1:mt-0 prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-3 prose-h3:text-lg prose-h3:mt-5 prose-h3:mb-2 prose-p:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-2 prose-td:text-sm dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400">
-              <ReactMarkdown>
+            <div className="prose prose-base max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h1:mt-0 prose-h2:text-xl prose-h2:mt-8 prose-h2:mb-3 prose-h3:text-lg prose-h3:mt-5 prose-h3:mb-2 prose-p:my-3 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:text-sm prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-2 prose-td:text-sm dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-3 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {generation.generatedArticle || generation.article || ''}
               </ReactMarkdown>
             </div>

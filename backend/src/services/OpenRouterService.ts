@@ -345,13 +345,19 @@ IMPORTANT RULES:
 10. TARGET ARTICLE LENGTH: aim for ${maxWords} words (minimum ${minWords})
 
 CRITICAL - Question Generation Rules:
-- Each question MUST target a DIFFERENT factual aspect (definition, statistic, cost, process, example, name, date)
-- 0-5 questions per block: 0 for opinion/tips/advice blocks, 3-5 for fact-heavy blocks
-- Questions MUST be SEARCHABLE — match how facts are stored in databases
-- Every question seeks a CONCRETE FACT: a number, name, date, definition, price, or percentage
+PURPOSE: Questions are used to search a knowledge base and the web for CONCRETE FACTS that make the article authoritative. The more specific data we find, the more expert the article reads.
+- 0-7 questions per block: 0 for opinion/advice blocks, 5-7 for fact-heavy blocks
+- Each question targets a DIFFERENT factual aspect: specific number, statistic, study result, comparison data, official name, year, price, percentage, legal reference, method name
+- Questions MUST be SEARCHABLE — short phrases that match how facts are stored in databases
 - Max 12 words per question
-- Good: "What is the average cost of X?", "How many people use X?", "What year was X introduced?", "What are the main types of X?"
-- BAD: "What challenges arise when implementing X?", "How does X compare to Y in terms of various factors?"
+- PRIORITIZE questions that yield:
+  * Specific numbers/statistics ("How many X exist?", "What percentage of X?")
+  * Named studies or researchers ("Who researched X?", "What study proved X?")
+  * Comparisons between options ("What is the price difference between X and Y?")
+  * Official definitions or legal references ("What law regulates X?", "How is X officially defined?")
+  * Year/date facts ("When was X introduced?", "Since when does X apply?")
+- Good: "What is the average cost of X?", "What study showed X effectiveness?", "How many people use X annually?", "What law regulates X in Germany?", "What is the success rate of X?"
+- BAD: "What challenges arise when implementing X?", "How does X impact society?"
 - Avoid academic, philosophical, opinion-seeking, or multi-part questions`;
 
     try {
@@ -496,17 +502,22 @@ Article type: ${articleType}${comment ? `\n\nAUTHOR'S INSTRUCTIONS:\n${comment}`
 For each block, provide:
 1. Detailed instruction (200-400 chars) explaining exactly what to write
 2. Specific LSI keywords relevant to that section (5-10 per block)
-3. For content blocks (h2/h3 only): generate 0-5 SIMPLE research questions
+3. For content blocks (h2/h3 only): generate 0-7 research questions that will fetch CONCRETE DATA
 
 CRITICAL - Question Rules:
-- FIRST assess: does this block topic have researchable facts? If YES → 3-5 questions. If opinion/advice → 0-1 questions.
-- Each question targets a DIFFERENT factual aspect (definition, stat, cost, process, example, date)
-- Questions MUST be SEARCHABLE — written the way answers are stored in databases
-- Every question seeks a CONCRETE FACT: number, name, date, definition, price, percentage
+PURPOSE: These questions search a knowledge base + web for facts that make the article authoritative. More specific data = more expert article.
+- FIRST assess: does this block have researchable facts? If YES → 5-7 questions. If opinion/advice → 0-2 questions.
+- Each question targets a DIFFERENT factual aspect: number, statistic, study, comparison, legal ref, price, percentage, year
+- Questions MUST be SEARCHABLE — short phrases matching database/web content
 - Max 12 words per question, must end with ?
-- Questions must cover BREADTH of the subtopic, not depth of one aspect
-- Good: "What is X?", "How much does X cost?", "What percentage of users prefer X?", "When was X first introduced?"
-- BAD: "What challenges arise when implementing X?", "How can one improve X considering factors?"
+- PRIORITIZE questions that yield:
+  * Statistics and numbers ("How many X?", "What percentage of X?")
+  * Named studies/researchers ("What study proved X?", "Who developed X method?")
+  * Comparisons ("What is the price of X vs Y?", "How does X compare to Y?")
+  * Legal/official references ("What law regulates X?", "What is the official definition of X?")
+  * Historical facts ("When was X introduced?", "Since when does X exist?")
+- Good: "What is the success rate of X?", "What study showed X effectiveness?", "How many people use X in Germany?", "What law regulates X?"
+- BAD: "What challenges arise when implementing X?", "How can one improve X?"
 - NO academic, multi-part, opinion-seeking, or philosophical questions
 
 Return the enriched blocks as JSON array in the same format, with improved instructions and LSI.
@@ -653,31 +664,49 @@ ${hasFactsFromResearch ? '- MUST include the verified facts provided above, inte
 
       case 'conclusion':
         {
-          // Scale conclusion: ~8% of target word count
-          const concTarget = Math.round(targetWordCount * 0.08);
-          const concMin = Math.max(80, concTarget - 20);
-          const concMax = concTarget + 30;
+          // Scale conclusion: ~10% of target word count for a proper wrap-up
+          const concTarget = Math.round(targetWordCount * 0.10);
+          const concMin = Math.max(120, concTarget - 30);
+          const concMax = concTarget + 50;
           estimatedWords = concTarget;
-          blockTypeInstructions = `Write a strong conclusion.
-- Summarize the key points covered
-- Reinforce the main message
-- End with a call to action or final thought
-- ${concMin}-${concMax} words`;
+          blockTypeInstructions = `Write a COMPREHENSIVE conclusion that wraps up the entire article. ${concMin}-${concMax} words.
+
+This conclusion must feel like a PROPER ENDING, not an abrupt stop. Structure:
+
+1. SYNTHESIS (not just summary): Connect the key insights from all previous sections into a coherent final picture. Show how the different parts relate to each other.
+2. KEY TAKEAWAYS: Distill 3-5 concrete, actionable takeaways the reader should remember. These should be specific, not generic platitudes.
+3. FINAL PERSPECTIVE: End with a strong, memorable closing thought — a recommendation, a forward-looking statement, or a decisive opinion that puts a definitive period on the article.
+
+IMPORTANT:
+- Reference specific concepts, data, or examples from the article above — prove you've read the whole thing
+- Do NOT introduce completely new topics
+- Do NOT use generic filler like "In conclusion..." or "To summarize..."
+- Make the reader feel they've gained clear, complete knowledge on this topic`;
         }
         break;
 
       case 'faq':
-        blockTypeInstructions = `Generate EXACTLY 4 FAQ items. NO MORE than 4!
+        blockTypeInstructions = `Generate a DYNAMIC FAQ section based on the full article above.
+
+YOUR TASK: Read through the entire article and identify:
+1. Questions a reader would STILL have after reading — gaps, unclear points, practical concerns
+2. Important details that were mentioned briefly but deserve more explanation
+3. Common misconceptions or concerns the target audience typically has
+
+Generate as MANY FAQ items as genuinely needed — typically 4-8, but could be more if the topic demands it.
+
 Format each as:
 **Q: [Short practical question]**
-A: [Concise answer - 1-2 sentences MAX]
+A: [Informative answer - 2-3 sentences, with specific details/data where possible]
 
 RULES:
-- Questions must be SHORT and practical (not academic)
-- Answers must be CONCISE (1-2 sentences, ~25-40 words each)
-- Focus on real user concerns and pain points
-- Total FAQ section: 120-180 words max`;
-        estimatedWords = 150;
+- Questions must be SHORT and practical (what real people actually google)
+- Answers should ADD VALUE — bring new detail, clarify a nuance, or give a concrete recommendation
+- Do NOT repeat what's already thoroughly covered in the article
+- Each answer: 30-60 words, specific and useful
+- Questions should complement the article, not duplicate it`;
+        // Dynamic: scale FAQ estimated words based on article length
+        estimatedWords = Math.round(targetWordCount * 0.12);
         break;
     }
 
@@ -1217,6 +1246,68 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       keywordDensityCheck,
       rhythmCheck,
     };
+  }
+
+  /**
+   * Smart trimming: AI decides which blocks to shorten and by how much
+   * Sends entire article to AI, it returns per-block word targets
+   */
+  async smartTrimArticle(
+    blocks: Array<{
+      id: number;
+      type: string;
+      heading: string;
+      content?: string;
+    }>,
+    currentWordCount: number,
+    targetMaxWords: number,
+    language: string
+  ): Promise<Array<{ blockId: number; targetWords: number; reason: string }>> {
+    const languageNames: Record<string, string> = {
+      'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
+      'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'uk': 'Ukrainian',
+      'nl': 'Dutch', 'pt': 'Portuguese',
+    };
+    const langName = languageNames[language] || 'English';
+    const wordsToRemove = currentWordCount - targetMaxWords;
+
+    const blocksInfo = blocks
+      .filter(b => b.content && b.type !== 'h1')
+      .map(b => {
+        const words = b.content!.split(/\s+/).length;
+        return `[BLOCK ${b.id}] ${b.type.toUpperCase()}: "${b.heading}" — ${words} words`;
+      })
+      .join('\n');
+
+    const systemPrompt = `You are an expert ${langName} editor. The article is ${currentWordCount} words but must be max ${targetMaxWords} words. You need to remove ~${wordsToRemove} words total.
+
+Analyze each block and decide which blocks can be shortened WITHOUT losing quality. Prioritize cutting:
+1. Blocks with the most filler/padding/repetition
+2. Blocks that are disproportionately long compared to their importance
+3. Generic or less essential sections
+
+PROTECT from cutting:
+- Blocks with specific data, statistics, or expert information
+- Introduction and conclusion (trim lightly at most)
+- FAQ section
+
+Return a JSON array of blocks to trim:
+[{"blockId": <number>, "targetWords": <number>, "reason": "brief explanation"}]
+
+The sum of words removed must be approximately ${wordsToRemove}. Only include blocks that need trimming.
+Return ONLY valid JSON.`;
+
+    const userPrompt = `Current article blocks:\n${blocksInfo}\n\nDecide which blocks to trim and by how much.`;
+
+    try {
+      const response = await this.chat(systemPrompt, userPrompt, 0.3);
+      const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      logger.error('Smart trim failed, falling back to empty', { error });
+    }
+    return [];
   }
 
   /**

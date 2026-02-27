@@ -1137,8 +1137,8 @@ export const startQueueProcessor = () => {
           anchor: l.anchor,
         }));
 
-        // Iterative review loop — max 3 iterations
-        const MAX_ITERATIONS = 3;
+        // Iterative review loop — continues until ALL checks pass (safety cap: 7)
+        const MAX_ITERATIONS = 7;
         let reviewPassed = false;
 
         for (let iteration = 1; iteration <= MAX_ITERATIONS; iteration++) {
@@ -1341,25 +1341,48 @@ export const startQueueProcessor = () => {
                 );
               }
             } else if (currentTotal > configMaxWords) {
-              const contentBlocks = reviewedBlocks
-                .filter(b => b.type === 'h2' || b.type === 'h3')
-                .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0));
-              const wordsOver = currentTotal - configMaxWords;
-              const blocksToTrim = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
+              // Smart AI-driven trimming: AI decides which blocks to shorten
+              await addLog(generationId, 'thinking', `Article is ${currentTotal} words (max ${configMaxWords}). AI choosing which blocks to trim...`);
+              const trimPlan = await openRouterForReview.smartTrimArticle(
+                reviewedBlocks.map(b => ({ id: b.id, type: b.type, heading: b.heading, content: b.content })),
+                currentTotal,
+                configMaxWords,
+                generation.config.language
+              );
 
-              for (const block of blocksToTrim) {
-                const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
-                if (blockIndex === -1 || !block.content) continue;
-                const blockWords = block.content.split(/\s+/).length;
-                // Target: trim this block to maxWordsPerBlock or proportionally
-                const targetBlockWords = Math.min(blockWords, maxWordsPerBlock);
-                await addLog(generationId, 'thinking', `Trimming Block #${block.id}: ${blockWords} → ${targetBlockWords} words...`);
-                reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
-                  { id: block.id, type: block.type, heading: block.heading, content: block.content },
-                  [`Too long (${blockWords} words). Cut to maximum ${targetBlockWords} words. Remove filler, redundancy, verbose phrases.`],
-                  `Be concise. Keep only essential information. Remove padding.`,
-                  targetBlockWords
-                );
+              if (trimPlan.length > 0) {
+                for (const plan of trimPlan) {
+                  const blockIndex = reviewedBlocks.findIndex(b => b.id === plan.blockId);
+                  if (blockIndex === -1 || !reviewedBlocks[blockIndex].content) continue;
+                  const block = reviewedBlocks[blockIndex];
+                  const blockWords = block.content!.split(/\s+/).length;
+                  await addLog(generationId, 'thinking', `Trimming Block #${block.id}: ${blockWords} → ${plan.targetWords} words (${plan.reason})`);
+                  reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
+                    { id: block.id, type: block.type, heading: block.heading, content: block.content! },
+                    [`Reduce to ${plan.targetWords} words. ${plan.reason}`],
+                    `Be concise. Keep expert data and specific facts. Remove filler and redundancy.`,
+                    plan.targetWords
+                  );
+                }
+              } else {
+                // Fallback: trim the 2 longest blocks
+                await addLog(generationId, 'thinking', `Smart trim returned empty, falling back to longest blocks...`);
+                const longestBlocks = reviewedBlocks
+                  .filter(b => b.type === 'h2' || b.type === 'h3')
+                  .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0))
+                  .slice(0, 2);
+                for (const block of longestBlocks) {
+                  const blockIndex = reviewedBlocks.findIndex(b => b.id === block.id);
+                  if (blockIndex === -1 || !block.content) continue;
+                  const blockWords = block.content.split(/\s+/).length;
+                  const targetBlockWords = Math.round(blockWords * 0.8);
+                  reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
+                    { id: block.id, type: block.type, heading: block.heading, content: block.content },
+                    [`Reduce from ${blockWords} to ~${targetBlockWords} words. Remove filler, keep facts.`],
+                    `Be concise. Preserve all links and expert data.`,
+                    targetBlockWords
+                  );
+                }
               }
             }
           }
@@ -1374,7 +1397,9 @@ export const startQueueProcessor = () => {
         }
 
         if (!reviewPassed) {
-          await addLog(generationId, 'warn', `⚠️ Article did not pass all checks after ${MAX_ITERATIONS} iterations. Proceeding with best result.`);
+          await addLog(generationId, 'warn', `⚠️ Article did not pass all checks after ${MAX_ITERATIONS} iterations. Delivering best result achieved.`);
+        } else {
+          await addLog(generationId, 'info', `✅ All quality checks passed! Article is ready.`);
         }
 
         // Assemble final article

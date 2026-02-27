@@ -472,8 +472,8 @@ export class SupabaseService {
             const cleanedMarkdown = this.cleanMarkdown(scrapeResult.data.markdown);
             const chunks = this.chunkText(cleanedMarkdown, 2000);
             if (chunks.length > 0) {
-              // Hard limit: max 15 chunks per page after cleaning
-              const limitedChunks = chunks.slice(0, 15);
+              // Dynamic limit: up to 30 chunks per page after cleaning
+              const limitedChunks = chunks.slice(0, 30);
               const stored = await this.storeChunks(
                 limitedChunks.map(c => ({ content: c, metadata: { URL: result.url } }))
               );
