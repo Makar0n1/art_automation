@@ -164,13 +164,18 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting
+// Rate limiting (skip monitoring endpoints - Prometheus scrapes every 10s)
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 1000, // limit each IP to 1000 requests per windowMs
   message: { success: false, error: 'Too many requests, please try again later' },
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Exempt monitoring endpoints from rate limiting
+    // Prometheus scrapes /api/metrics every 10s = 90 req/15min
+    return req.path === '/api/metrics' || req.path === '/api/health';
+  },
 });
 app.use('/api/', limiter);
 

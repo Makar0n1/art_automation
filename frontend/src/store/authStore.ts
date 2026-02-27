@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { AxiosError } from 'axios';
 import { User } from '@/types';
 import { authApi } from '@/lib/api';
 import { initSocket, disconnectSocket } from '@/lib/socket';
@@ -86,8 +87,20 @@ export const useAuthStore = create<AuthState>()(
           } else {
             get().logout();
           }
-        } catch {
-          get().logout();
+        } catch (error) {
+          // Only logout on 401 (invalid/expired token)
+          // Do NOT logout on 429 (rate limited) or network errors — keep session alive
+          if (error instanceof AxiosError && error.response?.status === 401) {
+            get().logout();
+          } else {
+            // For 429/network errors: keep authenticated state, just stop loading
+            // User's token is still valid, server is just temporarily unavailable
+            set({
+              token,
+              isAuthenticated: true,
+              isLoading: false,
+            });
+          }
         } finally {
           set({ isLoading: false });
         }

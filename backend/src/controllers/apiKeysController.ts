@@ -12,7 +12,7 @@ import { ApiKeyValidator } from '../services/ApiKeyValidator.js';
 import { encrypt, decrypt, maskSensitiveData } from '../services/CryptoService.js';
 import { logger } from '../utils/logger.js';
 
-const MAX_PIN_ATTEMPTS = 5;
+const MAX_PIN_ATTEMPTS = 3;
 
 /**
  * Get client IP address from request

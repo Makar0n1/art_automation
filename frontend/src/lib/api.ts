@@ -3,6 +3,7 @@
  */
 
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import toast from 'react-hot-toast';
 import { ApiResponse } from '@/types';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
@@ -41,6 +42,9 @@ const createApiClient = (): AxiosInstance => {
           localStorage.removeItem('token');
           window.location.href = '/';
         }
+      } else if (error.response?.status === 429) {
+        // Rate limited — show toast, do NOT redirect to login
+        toast.error('Too many requests. Please wait a moment.', { id: 'rate-limit' });
       }
       return Promise.reject(error);
     }
