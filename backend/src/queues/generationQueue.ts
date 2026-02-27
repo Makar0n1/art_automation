@@ -571,8 +571,6 @@ export const startQueueProcessor = () => {
         firecrawlForSearch = new FirecrawlService(apiKeys.firecrawl);
       }
 
-      // Track web fallback usage to limit total scraping time
-      const MAX_WEB_FALLBACKS = 5; // Max questions that trigger web scraping
       let webFallbacksUsed = 0;
 
       try {
@@ -626,10 +624,10 @@ export const startQueueProcessor = () => {
                 await addLog(generationId, 'info', `✅ Found answer for: "${question.substring(0, 50)}..."`, {
                   similarity: Math.round(answer.similarity * 100) + '%',
                 });
-              } else if (firecrawlForSearch && webFallbacksUsed < MAX_WEB_FALLBACKS) {
-                // Phase 2: Web fallback — search, scrape, store, retry (limited to MAX_WEB_FALLBACKS)
+              } else if (firecrawlForSearch) {
+                // Phase 2: Web fallback — search, scrape, store, retry
                 webFallbacksUsed++;
-                await addLog(generationId, 'thinking', `🌐 Web search ${webFallbacksUsed}/${MAX_WEB_FALLBACKS}: "${question.substring(0, 50)}..."`);
+                await addLog(generationId, 'thinking', `🌐 Web search #${webFallbacksUsed}: "${question.substring(0, 50)}..."`);
 
                 answer = await supabase.findAnswerWithWebFallback(
                   question,
@@ -650,8 +648,6 @@ export const startQueueProcessor = () => {
                 } else {
                   await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
                 }
-              } else if (firecrawlForSearch && webFallbacksUsed >= MAX_WEB_FALLBACKS) {
-                await addLog(generationId, 'thinking', `⏭️ Skipping web search (limit ${MAX_WEB_FALLBACKS} reached): "${question.substring(0, 40)}..."`);
               } else {
                 await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
               }

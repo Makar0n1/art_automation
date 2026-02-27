@@ -6,7 +6,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { ChevronDown, Search, Loader2, X } from 'lucide-react';
+import { ChevronDown, Search, Loader2, X, HelpCircle } from 'lucide-react';
 import { apiKeysApi } from '@/lib/api';
 import { OpenRouterModel } from '@/types';
 import { cn } from '@/lib/utils';
@@ -25,6 +25,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
   const [models, setModels] = useState<OpenRouterModel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expandedModelId, setExpandedModelId] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -50,6 +51,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
     const handleClickOutside = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setExpandedModelId(null);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -63,6 +65,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
       setTimeout(() => searchRef.current?.focus(), 50);
     } else {
       setSearch('');
+      setExpandedModelId(null);
     }
   }, [isOpen, fetchModels]);
 
@@ -78,7 +81,6 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
   const formatPrice = (priceStr: string): string => {
     const price = parseFloat(priceStr);
     if (price === 0) return 'Free';
-    if (price < 0.001) return `$${(price * 1000000).toFixed(2)}/M`;
     return `$${(price * 1000000).toFixed(2)}/M`;
   };
 
@@ -98,7 +100,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
         disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          'w-full flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm text-left',
+          'w-full flex items-center justify-between gap-2 rounded-lg border px-4 py-2.5 text-sm text-left',
           'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600',
           'hover:border-gray-400 dark:hover:border-gray-500 transition-colors',
           'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -113,7 +115,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+        <div className="absolute z-50 mt-1 w-full min-w-[360px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
           {/* Search input */}
           <div className="p-2 border-b border-gray-100 dark:border-gray-700">
             <div className="relative">
@@ -139,7 +141,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
           </div>
 
           {/* Models list */}
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-72 overflow-y-auto">
             {isLoading && (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
@@ -156,33 +158,97 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
             )}
 
             {!isLoading && !error && filteredModels.map((model) => (
-              <button
-                key={model.id}
-                type="button"
-                onClick={() => {
-                  onChange(model.id);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  'w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors',
-                  model.id === value && 'bg-blue-50 dark:bg-blue-900/20'
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-gray-900 dark:text-white truncate">
-                    {model.name}
-                  </span>
-                  {model.pricing && (
-                    <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                      {formatPrice(model.pricing.prompt)}
-                    </span>
+              <div key={model.id}>
+                {/* Model row */}
+                <div
+                  onClick={() => {
+                    onChange(model.id);
+                    setIsOpen(false);
+                  }}
+                  className={cn(
+                    'w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer',
+                    model.id === value && 'bg-blue-50 dark:bg-blue-900/20'
                   )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-gray-900 dark:text-white truncate">
+                      {model.name}
+                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {model.pricing && (
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {formatPrice(model.pricing.prompt)}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandedModelId(expandedModelId === model.id ? null : model.id);
+                        }}
+                        className="rounded p-0.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    {model.id}
+                    {model.contextLength && ` · ${Math.round(model.contextLength / 1000)}k ctx`}
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                  {model.id}
-                  {model.contextLength && ` · ${Math.round(model.contextLength / 1000)}k ctx`}
-                </div>
-              </button>
+
+                {/* Expanded info panel */}
+                {expandedModelId === model.id && (
+                  <div
+                    className="mx-3 mb-2 rounded-lg bg-gray-50 dark:bg-gray-700/50 border border-gray-200/60 dark:border-gray-600/40 p-3 text-xs"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="font-semibold text-gray-900 dark:text-white mb-0.5">
+                      {model.name}
+                    </div>
+                    <div className="text-gray-500 dark:text-gray-400 mb-2 font-mono text-[11px]">
+                      {model.id}
+                    </div>
+
+                    {model.pricing && (
+                      <div className="space-y-1 mb-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500 dark:text-gray-400">Prompt price:</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {formatPrice(model.pricing.prompt)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500 dark:text-gray-400">Completion price:</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {formatPrice(model.pricing.completion)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="border-t border-gray-200/60 dark:border-gray-600/40 pt-2 space-y-1">
+                      {model.contextLength && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500 dark:text-gray-400">Context window:</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {model.contextLength.toLocaleString()} tokens
+                          </span>
+                        </div>
+                      )}
+                      {model.maxCompletionTokens && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500 dark:text-gray-400">Max output:</span>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {model.maxCompletionTokens.toLocaleString()} tokens
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
         </div>

@@ -491,26 +491,27 @@ export default function ProjectPage() {
 
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
                   Word Count Range
                 </label>
-                <div className="flex items-center gap-3">
-                  <Input
-                    type="number"
-                    placeholder="Min"
-                    error={errors.minWords?.message}
-                    {...register('minWords', { valueAsNumber: true })}
-                    className="w-28"
-                  />
-                  <span className="text-gray-400">—</span>
-                  <Input
-                    type="number"
-                    placeholder="Max"
-                    error={errors.maxWords?.message}
-                    {...register('maxWords', { valueAsNumber: true })}
-                    className="w-28"
-                  />
-                  <span className="text-xs text-gray-500 dark:text-gray-400">words</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <Input
+                      type="number"
+                      placeholder="1200"
+                      error={errors.minWords?.message}
+                      {...register('minWords', { valueAsNumber: true })}
+                    />
+                  </div>
+                  <span className="shrink-0 text-gray-400">—</span>
+                  <div className="flex-1">
+                    <Input
+                      type="number"
+                      placeholder="1800"
+                      error={errors.maxWords?.message}
+                      {...register('maxWords', { valueAsNumber: true })}
+                    />
+                  </div>
                 </div>
               </div>
               <ModelSelector

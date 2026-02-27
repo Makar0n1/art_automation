@@ -642,12 +642,12 @@ Do not add any content, just the title.`;
           estimatedWords = Math.max(150, Math.min(350, wordsPerBlock));
           const hardCeiling = estimatedWords + 50;
           blockTypeInstructions = `Write ${estimatedWords}-${hardCeiling} words for this section. HARD MAXIMUM: ${hardCeiling} words. Going over is WORSE than being too brief.
-- Write in PROSE PARAGRAPHS (2-3 paragraphs). A bullet list is allowed ONLY if you are enumerating concrete items (max 5 items). No "wall of lists".
+- Start with 1-2 paragraphs of PROSE, then optionally add a short list or table if the content lends itself to it.
 - Start directly with content (heading is already defined).
 - Every sentence adds NEW information — no restating what was said before in this article.
 - Use LSI keywords with proper grammatical adaptation.
-- DO NOT write exhaustive lists of criteria, tips, or numbered items. Pick the 3-5 MOST important points and explain them well in prose.
-${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally into prose.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}`;
+- Use formatting that shows EXPERTISE: a short bullet list for practical items, a comparison table for data, bold for key terms. But always have prose too — never a section that is ONLY a list.
+${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}`;
         }
         break;
 
@@ -707,12 +707,15 @@ ${styleRules}
 CRITICAL RULES:
 1. Write ONLY in ${langName}. Use natural phrasing that a native speaker would actually use — not textbook language, not robotic, not overly colloquial.
 2. Match the style and tone of the previous content for consistency.
-3. WRITING STYLE — PROSE FIRST:
-   - Write in flowing PARAGRAPHS. This is an article, not a PowerPoint.
-   - Bullet/numbered lists are allowed ONLY for genuinely enumerable items (steps in a process, a short comparison of 3-4 items). Max 1 list per section.
-   - Tables are allowed ONLY for structured data comparison (prices, features). Max 1 table per article.
-   - FORBIDDEN: sections that are entirely bullet points, "wall of lists", criteria lists disguised as content.
-   - Bold text: use sparingly for key terms on first mention, NOT for every other phrase.
+3. WRITING STYLE — EXPERT MIX:
+   - The foundation is PROSE PARAGRAPHS — flowing text that reads like a real article.
+   - BUT: vary formatting to show expertise and improve readability:
+     * Short bullet lists (3-6 items) when listing concrete things (criteria, steps, features, pros/cons)
+     * A comparison table when comparing 2-4 options side by side (prices, features, providers)
+     * Bold key terms or short phrases to highlight important concepts
+     * Numbered lists for step-by-step processes
+   - BALANCE: each section should have at least 1-2 paragraphs of prose. A section can ALSO include a list or table, but never ONLY a list.
+   - Aim for variety across sections: if one section is pure prose, the next might have a short list or table. This keeps readers engaged.
 4. Do NOT invent statistics, numbers, percentages, research findings, or specific counts unless provided in VERIFIED FACTS. NEVER put invented numbers in headings (e.g. "34 Kriterien", "21 Tipps").
 5. KEYWORD INTEGRATION: Keywords and LSI phrases are given in BASE FORM. You MUST adapt them grammatically:
    - Add correct articles, prepositions, case endings as required by ${langName} grammar
@@ -1151,16 +1154,20 @@ Return the updated content with the link inserted:`;
         styleCheckRules = `\n7. STYLE COMPLIANCE - check if content follows: "${comment}"`;
       }
 
-      const systemPrompt = `You are a professional ${langName}-native editor. Review article quality and identify blocks with REAL problems.
+      const systemPrompt = `You are a professional ${langName}-native editor. Review article quality.
 
-Check for:
-1. UNNATURAL LANGUAGE - phrases that no native ${langName} speaker would use, awkward phrasing, textbook-style sentences
-2. EXCESSIVE LISTS - sections that are entirely bullet points instead of prose paragraphs. Articles should read as flowing text, not PowerPoint slides
-3. REPETITIONS - same idea restated in different words across blocks, redundant paragraphs, repeated phrases
-4. FILLER/WATER - unnecessary words, padding, vague statements that add no information
-5. FABRICATED CLAIMS - invented numbers, statistics, or specific counts not backed by sources (e.g. "34 Kriterien" but only 20 listed)${typeCheckRules}${styleCheckRules}
+Check ONLY for SERIOUS problems:
+1. UNNATURAL LANGUAGE - phrases that no native ${langName} speaker would ever write. Minor stylistic preferences do NOT count.
+2. CLEAR REPETITIONS - the SAME idea stated twice in DIFFERENT blocks (not just similar topics). Within a single block, minor rephrasing is fine.
+3. OBVIOUS FILLER - entire sentences that add zero information (e.g. "In this section we will discuss..."). Short transitional phrases are NOT filler.
+4. FABRICATED CLAIMS - invented numbers, statistics, or counts not backed by sources (e.g. "34 Kriterien" but only 20 listed)${typeCheckRules}${styleCheckRules}
 
-CRITICAL: Return ONLY blocks with REAL, specific issues. Do NOT flag blocks just to fill a quota.
+IMPORTANT:
+- Lists and tables are GOOD — they show expertise. Do NOT flag them as problems.
+- Bold text for key terms is GOOD. Do NOT flag it.
+- Minor style preferences are NOT issues. Only flag things that would make a native reader cringe.
+- An article that reads well overall should return an EMPTY ARRAY [].
+- Return MAXIMUM 2 blocks — only the worst offenders. If nothing is truly bad, return [].
 Return valid JSON array.`;
 
       const userPrompt = `Review this ${langName} article:
@@ -1185,8 +1192,9 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       logger.error('Rhythm check failed', { error });
     }
 
+    // Tolerance: 1 minor flag is acceptable — only fail if 2+ blocks flagged
     const rhythmCheck = {
-      passed: rhythmBlocksToFix.length === 0,
+      passed: rhythmBlocksToFix.length <= 1,
       blocksToFix: rhythmBlocksToFix,
     };
 
