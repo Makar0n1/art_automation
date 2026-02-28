@@ -423,6 +423,131 @@ export class SupabaseService {
   }
 
   /**
+   * Perplexity model for research queries via OpenRouter
+   */
+  private static readonly PERPLEXITY_MODEL = 'perplexity/sonar-pro';
+
+  /**
+   * Ask Perplexity a research question via OpenRouter.
+   * Returns a concise factual answer or null if unable to answer.
+   */
+  private async askPerplexity(
+    question: string,
+    language: string,
+    onLog?: LogCallback
+  ): Promise<string | null> {
+    try {
+      await onLog?.('thinking', `🤖 Asking Perplexity: "${question.substring(0, 60)}..."`);
+
+      const response = await axios.post<{
+        choices: Array<{ message: { content: string } }>;
+        usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+      }>(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: SupabaseService.PERPLEXITY_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content: `You are a research assistant. Answer the question with FACTS ONLY.
+Rules:
+- Respond in ${language} language
+- Be concise: 2-4 sentences, 50-150 words
+- Include specific data: numbers, names, dates, prices where available
+- If you cannot find a factual answer, respond with exactly: NO_ANSWER
+- Do NOT include citations, URLs, or source references in the text
+- Do NOT say "according to..." or "sources say..."
+- Just state the facts directly`,
+            },
+            {
+              role: 'user',
+              content: question,
+            },
+          ],
+          temperature: 0.1,
+          max_tokens: 500,
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${this.openRouterKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://seo-articles-generator.local',
+            'X-Title': 'SEO Articles Generator',
+          },
+          timeout: 30000,
+        }
+      );
+
+      const content = response.data?.choices?.[0]?.message?.content?.trim();
+
+      if (!content || content === 'NO_ANSWER' || content.includes('NO_ANSWER')) {
+        await onLog?.('thinking', `❌ Perplexity could not answer: "${question.substring(0, 50)}..."`);
+        return null;
+      }
+
+      await onLog?.('info', `✅ Perplexity answered (${content.split(/\s+/).length} words)`);
+      return content;
+    } catch (error) {
+      logger.error('Perplexity query failed', {
+        error: error instanceof Error ? error.message : 'Unknown',
+        question: question.substring(0, 80),
+      });
+      await onLog?.('warn', `⚠️ Perplexity query failed: ${error instanceof Error ? error.message : 'Unknown'}`);
+      return null;
+    }
+  }
+
+  /**
+   * Find answer using Perplexity AI via OpenRouter as fallback.
+   * If Perplexity provides an answer, store it in Supabase for future reuse (self-learning).
+   */
+  async findAnswerWithPerplexity(
+    question: string,
+    language: string,
+    onLog?: LogCallback
+  ): Promise<AnsweredQuestion | null> {
+    try {
+      const perplexityAnswer = await this.askPerplexity(question, language, onLog);
+
+      if (!perplexityAnswer) {
+        return null;
+      }
+
+      // Self-learning: store the answer in Supabase for future direct lookups
+      try {
+        await onLog?.('thinking', `💾 Storing answer in knowledge base for future reuse...`);
+        const stored = await this.storeChunks([
+          {
+            content: `Q: ${question}\nA: ${perplexityAnswer}`,
+            metadata: { URL: 'perplexity-ai-research' },
+          },
+        ]);
+        if (stored > 0) {
+          await onLog?.('thinking', `💾 Answer stored in Supabase for self-learning`);
+        }
+      } catch (storeError) {
+        // Non-fatal: answer was found but couldn't be stored
+        logger.warn('Failed to store Perplexity answer in Supabase', {
+          error: storeError instanceof Error ? storeError.message : 'Unknown',
+        });
+      }
+
+      return {
+        question,
+        answer: perplexityAnswer,
+        similarity: 0.95,
+      };
+    } catch (error) {
+      logger.error('findAnswerWithPerplexity failed', {
+        error: error instanceof Error ? error.message : 'Unknown',
+        question: question.substring(0, 80),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * @deprecated Use findAnswerWithPerplexity() instead. Kept for rollback purposes.
    * Find answer with web fallback: if Supabase has no answer, search web,
    * scrape pages, chunk & store in Supabase, then retry search.
    */

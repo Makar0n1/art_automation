@@ -578,13 +578,8 @@ export const startQueueProcessor = () => {
         apiKeys.openRouter
       );
 
-      // Create FirecrawlService for web fallback (if Firecrawl key available)
-      let firecrawlForSearch: FirecrawlService | null = null;
-      if (apiKeys.firecrawl) {
-        firecrawlForSearch = new FirecrawlService(apiKeys.firecrawl);
-      }
-
-      let webFallbacksUsed = 0;
+      const MAX_PERPLEXITY_FALLBACKS = 10;
+      let perplexityFallbacksUsed = 0;
 
       try {
         // Test connection first
@@ -598,7 +593,7 @@ export const startQueueProcessor = () => {
         const updatedBlocks: ArticleBlock[] = [];
         let totalQuestions = 0;
         let answeredCount = 0;
-        let webSearchCount = 0;
+        let perplexitySearchCount = 0;
 
         // Count total questions first
         for (const block of freshGeneration.articleBlocks) {
@@ -637,32 +632,29 @@ export const startQueueProcessor = () => {
                 await addLog(generationId, 'info', `✅ Found answer for: "${question.substring(0, 50)}..."`, {
                   similarity: Math.round(answer.similarity * 100) + '%',
                 });
-              } else if (firecrawlForSearch) {
-                // Phase 2: Web fallback — search, scrape, store, retry
-                webFallbacksUsed++;
-                await addLog(generationId, 'thinking', `🌐 Web search #${webFallbacksUsed}: "${question.substring(0, 50)}..."`);
+              } else if (perplexityFallbacksUsed < MAX_PERPLEXITY_FALLBACKS) {
+                // Phase 2: Perplexity fallback via OpenRouter
+                perplexityFallbacksUsed++;
+                await addLog(generationId, 'thinking', `🤖 Perplexity search #${perplexityFallbacksUsed}/${MAX_PERPLEXITY_FALLBACKS}: "${question.substring(0, 50)}..."`);
 
-                answer = await supabase.findAnswerWithWebFallback(
+                answer = await supabase.findAnswerWithPerplexity(
                   question,
-                  firecrawlForSearch,
                   freshGeneration.config.language,
-                  freshGeneration.config.region,
-                  // Forward logs to frontend via addLog
                   (level, message) => addLog(generationId, level, message)
                 );
 
                 if (answer) {
                   answeredQuestions.push(answer);
                   answeredCount++;
-                  webSearchCount++;
-                  await addLog(generationId, 'info', `✅ Found answer via web search for: "${question.substring(0, 50)}..."`, {
+                  perplexitySearchCount++;
+                  await addLog(generationId, 'info', `✅ Found answer via Perplexity for: "${question.substring(0, 50)}..."`, {
                     similarity: Math.round(answer.similarity * 100) + '%',
                   });
                 } else {
                   await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
                 }
               } else {
-                await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
+                await addLog(generationId, 'thinking', `⏭️ Skipping question (Perplexity limit reached): "${question.substring(0, 50)}..."`);
               }
 
               // Update progress within Step 4 (43-57%)
@@ -675,7 +667,7 @@ export const startQueueProcessor = () => {
             }
 
             // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 300));
+            await new Promise(resolve => setTimeout(resolve, 200));
           }
 
           // Update block with answered questions (remove unanswered ones)
@@ -714,7 +706,7 @@ export const startQueueProcessor = () => {
         // Final emission of blocks
         emitBlocks(generationId, updatedBlocks);
 
-        await addLog(generationId, 'info', `🎯 Question answering complete! Found ${answeredCount}/${totalQuestions} answers (${webSearchCount} from web search)`);
+        await addLog(generationId, 'info', `🎯 Question answering complete! Found ${answeredCount}/${totalQuestions} answers (${perplexitySearchCount} via Perplexity)`);
 
       } catch (error) {
         await addLog(generationId, 'error', `❌ Question answering failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
