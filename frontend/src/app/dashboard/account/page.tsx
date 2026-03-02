@@ -97,7 +97,7 @@ export default function AccountPage() {
     const storedAt = localStorage.getItem('pinSessionTokenSetAt');
     if (storedToken && storedAt) {
       const elapsed = Date.now() - parseInt(storedAt, 10);
-      if (elapsed < 5 * 60 * 1000) {
+      if (elapsed < 60 * 1000) {
         setPinSessionToken(storedToken);
         setIsPinVerified(true);
       } else {
@@ -147,7 +147,7 @@ export default function AccountPage() {
     if (!pinSessionToken) return;
     const interval = setInterval(() => {
       const storedAt = localStorage.getItem('pinSessionTokenSetAt');
-      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 5 * 60 * 1000) {
+      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 60 * 1000) {
         setPinSessionToken(null);
         setIsPinVerified(false);
         localStorage.removeItem('pinSessionToken');

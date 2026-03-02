@@ -92,7 +92,7 @@ export default function SettingsPage() {
     const storedAt = localStorage.getItem('pinSessionTokenSetAt');
     if (storedToken && storedAt) {
       const elapsed = Date.now() - parseInt(storedAt, 10);
-      if (elapsed < 5 * 60 * 1000) {
+      if (elapsed < 60 * 1000) {
         setPinSessionToken(storedToken);
       } else {
         // Token already expired — clean up
@@ -107,7 +107,7 @@ export default function SettingsPage() {
     if (!pinSessionToken) return;
     const interval = setInterval(() => {
       const storedAt = localStorage.getItem('pinSessionTokenSetAt');
-      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 5 * 60 * 1000) {
+      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 60 * 1000) {
         setPinSessionToken(null);
         setEditMode(null);
         localStorage.removeItem('pinSessionToken');

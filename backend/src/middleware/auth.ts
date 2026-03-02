@@ -101,14 +101,14 @@ export const verifyToken = (token: string): JwtPayload | null => {
 };
 
 /**
- * Generate a short-lived PIN session token (5 minutes)
+ * Generate a short-lived PIN session token (1 minute)
  * Used to authorize sensitive operations (password/PIN/API key changes)
  */
 export const generatePinSessionToken = (userId: string): string => {
   return jwt.sign(
     { userId, type: 'pin_session' },
     config.jwt.secret,
-    { expiresIn: '5m' }
+    { expiresIn: '1m' }
   );
 };
 
