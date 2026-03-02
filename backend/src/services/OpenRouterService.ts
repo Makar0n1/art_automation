@@ -999,16 +999,24 @@ RULES:
         break;
     }
 
+    // ─── INLINE (non-anchorless): focused paragraph approach ───
+    // Instead of sending the entire block and hoping AI inserts the link,
+    // we pick ONE paragraph and ask AI to rewrite just that paragraph.
+    // This is far more reliable because the AI works with 2-3 sentences, not 300 words.
+    if (link.displayType === 'inline' && !link.isAnchorless) {
+      return this.insertInlineLinkViaParagraph(blockContent, link, language);
+    }
+
+    // ─── All other display types: full-block approach ───
     const systemPrompt = `You are a markdown editor inserting exactly ONE internal link into content.
 
 CRITICAL RULES:
 1. The anchor is a search keyword. Keep ALL keyword words inside [brackets] in the same order. You MAY insert small grammatical particles (zu, für, von, im, der, die, das, ein, eine...) inside brackets if the language grammar requires it. NEVER remove or replace keyword words.
 2. DO NOT change the URL under any circumstances
 3. Preserve ALL existing markdown formatting (bold, lists, other links, etc.)
-4. Make MINIMAL changes — only modify what's needed for the link to fit naturally
-5. Write in ${langName}
-6. Return ONLY the updated content, no explanations or commentary
-7. DO NOT wrap output in code blocks`;
+4. Write in ${langName}
+5. Return ONLY the updated content, no explanations or commentary
+6. DO NOT wrap output in code blocks`;
 
     const userPrompt = `Insert ONE link into this content:
 
@@ -1029,8 +1037,6 @@ Return the updated content with the link inserted:`;
 
     try {
       const response = await this.chat(systemPrompt, userPrompt, 0.3);
-
-      // Clean up response
       let updatedContent = response.trim();
       updatedContent = updatedContent.replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
 
@@ -1039,7 +1045,6 @@ Return the updated content with the link inserted:`;
         link.url,
         link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/',
       ];
-
       const urlFound = urlVariants.some(url => updatedContent.includes(url));
 
       if (!urlFound) {
@@ -1049,33 +1054,16 @@ Return the updated content with the link inserted:`;
         } else if (link.displayType === 'sidebar') {
           updatedContent += `\n\n**See also:** ${linkMarkdown}`;
         } else if (link.displayType === 'inline') {
-          // AI failed to include the link — retry with a focused prompt on one paragraph
-          logger.warn('Inline link missing from AI response, retrying with focused paragraph prompt');
-          updatedContent = await this.retryInlineLinkInsertion(blockContent, link, language);
+          // Anchorless inline — append to last paragraph
+          updatedContent += ` ${linkMarkdown}`;
         } else {
           updatedContent += `\n\n${linkMarkdown}`;
-        }
-      } else {
-        logger.debug(`Link verified in response: ${link.url}`);
-      }
-
-      // Post-processing for inline: validate link is truly woven into a paragraph
-      if (link.displayType === 'inline' && !link.isAnchorless) {
-        const linkLine = updatedContent.split('\n').find(l => l.includes(link.url));
-        if (linkLine) {
-          const textWithoutLink = linkLine.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
-          // If the line containing the link has less than 40 chars of surrounding text,
-          // the link is isolated (standalone or label-style) — retry
-          if (textWithoutLink.length < 40) {
-            logger.warn(`Link is isolated (only ${textWithoutLink.length} chars around it), retrying: "${linkLine.trim().slice(0, 80)}..."`);
-            updatedContent = await this.retryInlineLinkInsertion(blockContent, link, language);
-          }
         }
       }
 
       return updatedContent;
     } catch (error) {
-      logger.error(`Failed to insert single link into block "${blockHeading}"`, { error });
+      logger.error(`Failed to insert link into block "${blockHeading}"`, { error });
       if (link.displayType === 'list_start') {
         return `${linkMarkdown}\n\n${blockContent}`;
       } else if (link.displayType === 'sidebar') {
@@ -1086,11 +1074,12 @@ Return the updated content with the link inserted:`;
   }
 
   /**
-   * Retry inline link insertion with a focused prompt — picks one paragraph
-   * and asks AI to rewrite ONLY that paragraph with the link woven in.
-   * Much more reliable than the full-content approach.
+   * PRIMARY method for inline link insertion.
+   * Picks ONE paragraph from the block and asks AI to rewrite just that paragraph.
+   * Much more reliable than sending the entire block — AI works with 2-3 sentences, not 300 words.
+   * Has built-in validation + deterministic fallback.
    */
-  private async retryInlineLinkInsertion(
+  private async insertInlineLinkViaParagraph(
     blockContent: string,
     link: { url: string; anchor: string; isAnchorless: boolean; displayType: string },
     language: string
@@ -1103,7 +1092,7 @@ Return the updated content with the link inserted:`;
     const langName = languageNames[language] || 'English';
     const linkMarkdown = `[${link.anchor}](${link.url})`;
 
-    // Split content into paragraphs and pick the longest prose paragraph
+    // Split content into paragraphs and pick the best prose paragraph
     const paragraphs = blockContent.split(/\n\n+/);
     let bestIdx = 0;
     let bestLen = 0;
@@ -1119,55 +1108,112 @@ Return the updated content with the link inserted:`;
 
     const targetParagraph = paragraphs[bestIdx];
 
-    const retryPrompt = `Rewrite this paragraph so that the link is grammatically woven into ONE of its sentences.
+    const systemPrompt = `You rewrite a single paragraph to include exactly one markdown link. Return ONLY the rewritten paragraph — no explanations, no code blocks, no extra text. Write in ${langName}.`;
+
+    const userPrompt = `Rewrite this paragraph so the link is grammatically woven into ONE of its sentences.
 
 PARAGRAPH:
 ${targetParagraph}
 
-ANCHOR (search keyword): "${link.anchor}"
-URL: ${link.url}
-LANGUAGE: ${langName}
+LINK TO INSERT: [${link.anchor}](${link.url})
 
-TECHNIQUE: Pick one sentence. Rewrite it so the anchor becomes a natural grammatical element.
-- Keep ALL keyword words inside [brackets] in the same order
-- You CAN insert grammatical particles inside brackets if needed (zu, für, von, der, die, das, ein, eine...)
+ANCHOR RULES:
+- "${link.anchor}" is a search keyword — ALL these words MUST appear inside [brackets] in the same order
+- You CAN insert grammatical particles inside brackets if the language requires it (zu, für, von, im, der, die, das, ein, eine, einen...)
+- You CANNOT remove, replace, or reorder keyword words
 - Add grammar outside brackets too (articles, prepositions, case endings)
 
-Example (German): Anchor "Bachelorarbeit schreiben lassen"
-BEFORE: "Viele Studierende stehen unter Zeitdruck bei der Abschlussarbeit."
-AFTER: "Viele Studierende entscheiden sich, eine [Bachelorarbeit schreiben zu lassen](${link.url}), um den Zeitdruck zu reduzieren."
-→ "zu" inserted inside brackets for correct infinitive grammar
+TECHNIQUE:
+1. Pick ONE sentence that is thematically closest to the anchor topic
+2. REWRITE that sentence so the anchor becomes a natural grammatical element (subject, object, attribute)
+3. Keep all OTHER sentences unchanged
 
-Return ONLY the rewritten paragraph, nothing else.`;
+EXAMPLES:
+- Anchor "Bachelorarbeit schreiben lassen", URL ${link.url}
+  BEFORE: "Viele Studierende stehen unter Zeitdruck bei der Abschlussarbeit."
+  AFTER: "Viele Studierende entscheiden sich, eine [Bachelorarbeit schreiben zu lassen](${link.url}), um den Zeitdruck zu reduzieren."
 
-    try {
-      let result = await this.chat(
-        `You rewrite a single paragraph to include a link. Return ONLY the paragraph. No explanations. Write in ${langName}.`,
-        retryPrompt,
-        0.4
-      );
-      result = result.trim().replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
+- Anchor "Ghostwriter Masterarbeit", URL ${link.url}
+  BEFORE: "Professionelle Unterstützung macht den Unterschied."
+  AFTER: "Ein erfahrener [Ghostwriter Masterarbeit](${link.url}) macht dabei den entscheidenden Unterschied."
 
-      // Verify URL is in the result
-      if (!result.includes(link.url)) {
-        logger.warn('Retry also failed to include URL, returning original with link appended to paragraph');
-        // Last resort: append naturally to the paragraph
-        const lastSentenceEnd = targetParagraph.search(/[.!?]\s*$/);
-        if (lastSentenceEnd !== -1) {
-          const punct = targetParagraph[lastSentenceEnd];
-          result = targetParagraph.slice(0, lastSentenceEnd) + ` — ${linkMarkdown}` + punct;
+FORBIDDEN:
+- Link on its own line — NEVER
+- "[anchor](url)" without surrounding sentence — NEVER
+- "Mehr Infos: [anchor](url)" — NEVER
+- Adding a brand-new sentence just for the link — rewrite an EXISTING one
+
+Return ONLY the rewritten paragraph:`;
+
+    // Attempt 1: temperature 0.4
+    for (const temp of [0.4, 0.6]) {
+      try {
+        let result = await this.chat(systemPrompt, userPrompt, temp);
+        result = result.trim().replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
+
+        // Validate: URL present AND not standalone
+        const urlPresent = result.includes(link.url) ||
+          result.includes(link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/');
+
+        if (urlPresent) {
+          const linkLine = result.split('\n').find(l => l.includes(link.url));
+          if (linkLine) {
+            const textAround = linkLine.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
+            if (textAround.length >= 40) {
+              // Success — link is properly woven in
+              logger.info(`Inline link inserted successfully (temp=${temp}): "${linkLine.trim().slice(0, 100)}..."`);
+              paragraphs[bestIdx] = result;
+              return paragraphs.join('\n\n');
+            }
+            logger.warn(`Inline link isolated (${textAround.length} chars, temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'will force-insert'}`);
+          }
         } else {
-          result = targetParagraph + ` — ${linkMarkdown}.`;
+          logger.warn(`URL missing from AI response (temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'will force-insert'}`);
         }
+      } catch (error) {
+        logger.warn(`AI call failed (temp=${temp}): ${error}`);
       }
-
-      // Replace the target paragraph in the original content
-      paragraphs[bestIdx] = result;
-      return paragraphs.join('\n\n');
-    } catch (retryError) {
-      logger.error('Retry inline link insertion also failed', { retryError });
-      return blockContent + `\n\n${linkMarkdown}`;
     }
+
+    // Both attempts failed — deterministic fallback
+    logger.warn(`Both AI attempts failed for inline link [${link.anchor}], using deterministic fallback`);
+    paragraphs[bestIdx] = this.forceInsertLinkIntoParagraph(targetParagraph, linkMarkdown);
+    return paragraphs.join('\n\n');
+  }
+
+  /**
+   * Deterministic fallback: insert a link into a paragraph's last sentence.
+   * Finds the last sentence-ending punctuation and inserts the link before it.
+   * Guaranteed to produce an inline link, never standalone.
+   */
+  private forceInsertLinkIntoParagraph(paragraph: string, linkMarkdown: string): string {
+    // Find sentences by splitting on sentence-ending punctuation
+    // We want to insert the link into the last real sentence
+    const sentences = paragraph.split(/(?<=[.!?])\s+/);
+
+    if (sentences.length >= 2) {
+      // Insert before the last sentence's final punctuation
+      const lastSentence = sentences[sentences.length - 1];
+      const punctMatch = lastSentence.match(/([.!?])\s*$/);
+      if (punctMatch) {
+        const punct = punctMatch[1];
+        const idx = lastSentence.lastIndexOf(punct);
+        sentences[sentences.length - 1] = lastSentence.slice(0, idx) + ` — ${linkMarkdown}` + punct;
+      } else {
+        sentences[sentences.length - 1] = lastSentence + ` — ${linkMarkdown}.`;
+      }
+      return sentences.join(' ');
+    }
+
+    // Single sentence paragraph — insert before final punctuation
+    const punctMatch = paragraph.match(/([.!?])\s*$/);
+    if (punctMatch) {
+      const punct = punctMatch[1];
+      const idx = paragraph.lastIndexOf(punct);
+      return paragraph.slice(0, idx) + ` — ${linkMarkdown}` + punct;
+    }
+
+    return paragraph + ` — ${linkMarkdown}.`;
   }
 
   /**
