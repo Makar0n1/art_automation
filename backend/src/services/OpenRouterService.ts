@@ -1440,7 +1440,8 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
     }>,
     currentWordCount: number,
     targetMaxWords: number,
-    language: string
+    language: string,
+    blockIdsWithLinks: Set<number> = new Set()
   ): Promise<Array<{ blockId: number; targetWords: number; reason: string }>> {
     const languageNames: Record<string, string> = {
       'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
@@ -1454,7 +1455,8 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       .filter(b => b.content && b.type !== 'h1')
       .map(b => {
         const words = b.content!.split(/\s+/).length;
-        return `[BLOCK ${b.id}] ${b.type.toUpperCase()}: "${b.heading}" — ${words} words`;
+        const hasLink = blockIdsWithLinks.has(b.id) ? ' ⛔ CONTAINS LINK — DO NOT TRIM' : '';
+        return `[BLOCK ${b.id}] ${b.type.toUpperCase()}: "${b.heading}" — ${words} words${hasLink}`;
       })
       .join('\n');
 
@@ -1465,15 +1467,19 @@ Analyze each block and decide which blocks can be shortened WITHOUT losing quali
 2. Blocks that are disproportionately long compared to their importance
 3. Generic or less essential sections
 
-PROTECT from cutting:
-- Blocks with specific data, statistics, or expert information
+ABSOLUTELY FORBIDDEN to trim:
+- Blocks marked with "⛔ CONTAINS LINK" — these have carefully inserted internal links that WILL BREAK if text is changed
 - Introduction and conclusion (trim lightly at most)
 - FAQ section
+
+PROTECT from heavy cutting:
+- Blocks with specific data, statistics, or expert information
 
 Return a JSON array of blocks to trim:
 [{"blockId": <number>, "targetWords": <number>, "reason": "brief explanation"}]
 
 The sum of words removed must be approximately ${wordsToRemove}. Only include blocks that need trimming.
+NEVER include blocks that contain links.
 Return ONLY valid JSON.`;
 
     const userPrompt = `Current article blocks:\n${blocksInfo}\n\nDecide which blocks to trim and by how much.`;
@@ -1482,7 +1488,10 @@ Return ONLY valid JSON.`;
       const response = await this.chat(systemPrompt, userPrompt, 0.3);
       const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        // Hard filter: remove any blocks with links even if AI included them
+        return parsed.filter((p: { blockId: number }) => !blockIdsWithLinks.has(p.blockId));
+      }
     } catch (error) {
       logger.error('Smart trim failed, falling back to empty', { error });
     }

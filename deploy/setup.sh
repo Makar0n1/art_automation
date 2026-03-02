@@ -56,6 +56,7 @@ if [ ! -f ".env" ]; then
 
     JWT_SECRET=$(openssl rand -hex 64)
     ENCRYPTION_KEY=$(openssl rand -hex 32)
+    REDIS_PASSWORD=$(openssl rand -hex 16)
     GRAFANA_PASSWORD=$(openssl rand -base64 16 | tr -d '/+=')
 
     # Replace placeholders (works on both Linux and macOS)
@@ -63,11 +64,13 @@ if [ ! -f ".env" ]; then
         # macOS
         sed -i '' "s/generate-with-openssl-rand-hex-64/$JWT_SECRET/" .env
         sed -i '' "s/generate-with-openssl-rand-hex-32/$ENCRYPTION_KEY/" .env
+        sed -i '' "s/generate-with-openssl-rand-hex-16/$REDIS_PASSWORD/" .env
         sed -i '' "s/your-secure-grafana-password/$GRAFANA_PASSWORD/" .env
     else
         # Linux
         sed -i "s/generate-with-openssl-rand-hex-64/$JWT_SECRET/" .env
         sed -i "s/generate-with-openssl-rand-hex-32/$ENCRYPTION_KEY/" .env
+        sed -i "s/generate-with-openssl-rand-hex-16/$REDIS_PASSWORD/" .env
         sed -i "s/your-secure-grafana-password/$GRAFANA_PASSWORD/" .env
     fi
 

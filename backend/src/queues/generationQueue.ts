@@ -1208,7 +1208,32 @@ export const startQueueProcessor = () => {
               for (const url of missingUrls) {
                 const linkMatch = block.content.match(new RegExp(`\\[([^\\]]*)\\]\\(${url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`));
                 if (linkMatch) {
-                  finalContent += `\n\n${linkMatch[0]}`;
+                  // Insert link into a paragraph instead of appending standalone
+                  const linkMarkdown = linkMatch[0];
+                  const paragraphs = finalContent.split(/\n\n+/);
+                  // Find the longest prose paragraph (not a heading, list, table)
+                  let bestIdx = -1;
+                  let bestLen = 0;
+                  for (let i = 0; i < paragraphs.length; i++) {
+                    const p = paragraphs[i].trim();
+                    if (/^[#|>*\-\d]/.test(p)) continue; // skip headings, lists, tables
+                    if (p.length > bestLen) { bestLen = p.length; bestIdx = i; }
+                  }
+                  if (bestIdx >= 0 && bestLen > 40) {
+                    // Insert before the last punctuation in the paragraph
+                    const p = paragraphs[bestIdx];
+                    const punctMatch = p.match(/([.!?])\s*$/);
+                    if (punctMatch) {
+                      const lastIdx = p.lastIndexOf(punctMatch[1]);
+                      paragraphs[bestIdx] = p.slice(0, lastIdx) + ` — ${linkMarkdown}` + punctMatch[1];
+                    } else {
+                      paragraphs[bestIdx] = p + ` — ${linkMarkdown}.`;
+                    }
+                    finalContent = paragraphs.join('\n\n');
+                  } else {
+                    // No suitable paragraph found — append as last resort
+                    finalContent += `\n\n${linkMarkdown}`;
+                  }
                 }
               }
             }
@@ -1313,6 +1338,18 @@ export const startQueueProcessor = () => {
 
           // ========== 5. FIX WORD COUNT LAST (after all other fixes) ==========
           if (!review.wordCountCheck.passed) {
+            // Determine which blocks contain internal links — these are PROTECTED from trimming/expanding
+            const allLinkUrls = (generation.config.internalLinks || []).map(l => l.url);
+            const blockIdsWithLinks = new Set<number>();
+            for (const block of reviewedBlocks) {
+              if (block.content && allLinkUrls.some(url => block.content!.includes(url))) {
+                blockIdsWithLinks.add(block.id);
+              }
+            }
+            if (blockIdsWithLinks.size > 0) {
+              await addLog(generationId, 'info', `  🔒 Blocks with links (protected from trim/expand): ${[...blockIdsWithLinks].map(id => `#${id}`).join(', ')}`);
+            }
+
             // Recount words after all fixes above
             const currentTotal = reviewedBlocks
               .filter(b => b.content && b.type !== 'h1')
@@ -1320,7 +1357,7 @@ export const startQueueProcessor = () => {
 
             if (currentTotal < configMinWords) {
               const contentBlocks = reviewedBlocks
-                .filter(b => b.type === 'h2' || b.type === 'h3')
+                .filter(b => (b.type === 'h2' || b.type === 'h3') && !blockIdsWithLinks.has(b.id))
                 .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
               const wordsNeeded = configMinWords - currentTotal;
               const blocksToExpand = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
@@ -1340,13 +1377,14 @@ export const startQueueProcessor = () => {
                 );
               }
             } else if (currentTotal > configMaxWords) {
-              // Smart AI-driven trimming: AI decides which blocks to shorten
-              await addLog(generationId, 'thinking', `Article is ${currentTotal} words (max ${configMaxWords}). AI choosing which blocks to trim...`);
+              // Smart AI-driven trimming: AI decides which blocks to shorten (blocks with links are protected)
+              await addLog(generationId, 'thinking', `Article is ${currentTotal} words (max ${configMaxWords}). AI choosing which blocks to trim (${blockIdsWithLinks.size} blocks protected)...`);
               const trimPlan = await openRouterForReview.smartTrimArticle(
                 reviewedBlocks.map(b => ({ id: b.id, type: b.type, heading: b.heading, content: b.content })),
                 currentTotal,
                 configMaxWords,
-                generation.config.language
+                generation.config.language,
+                blockIdsWithLinks
               );
 
               if (trimPlan.length > 0) {
@@ -1364,10 +1402,10 @@ export const startQueueProcessor = () => {
                   );
                 }
               } else {
-                // Fallback: trim the 2 longest blocks
-                await addLog(generationId, 'thinking', `Smart trim returned empty, falling back to longest blocks...`);
+                // Fallback: trim the 2 longest blocks WITHOUT links
+                await addLog(generationId, 'thinking', `Smart trim returned empty, falling back to longest blocks (excluding link blocks)...`);
                 const longestBlocks = reviewedBlocks
-                  .filter(b => b.type === 'h2' || b.type === 'h3')
+                  .filter(b => (b.type === 'h2' || b.type === 'h3') && !blockIdsWithLinks.has(b.id))
                   .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0))
                   .slice(0, 2);
                 for (const block of longestBlocks) {

@@ -8,8 +8,7 @@ services:
     image: mongo:7
     container_name: seo-articles-mongodb
     restart: unless-stopped
-    ports:
-      - "27017:27017"
+    # No external ports — only accessible from other containers via internal network
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -28,13 +27,12 @@ services:
     image: redis:7-alpine
     container_name: seo-articles-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # No external ports — only accessible from other containers via internal network
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -63,6 +61,7 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/seo_articles
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -90,6 +89,7 @@ services:
       - MONGODB_URI=mongodb://mongodb:27017/seo_articles
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY}
@@ -127,8 +127,7 @@ services:
     image: prom/prometheus:v2.48.0
     container_name: seo-articles-prometheus
     restart: unless-stopped
-    ports:
-      - "9090:9090"
+    # No external ports — accessed via Grafana internally
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -148,8 +147,7 @@ services:
     image: gcr.io/cadvisor/cadvisor:v0.47.2
     container_name: seo-articles-cadvisor
     restart: unless-stopped
-    ports:
-      - "8080:8080"
+    # No external ports — scraped by Prometheus internally
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -165,10 +163,10 @@ services:
     image: oliver006/redis_exporter:v1.55.0
     container_name: seo-articles-redis-exporter
     restart: unless-stopped
-    ports:
-      - "9121:9121"
+    # No external ports — scraped by Prometheus internally
     environment:
       - REDIS_ADDR=redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
@@ -179,8 +177,7 @@ services:
     container_name: seo-articles-loki
     restart: unless-stopped
     user: "0"
-    ports:
-      - "3100:3100"
+    # No external ports — accessed via Grafana internally
     volumes:
       - ./monitoring/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
@@ -270,18 +267,19 @@ volumes:
 #   docker compose down -v
 #
 # ============================================
-# MONITORING URLS:
+# ACCESSIBLE URLS:
+#
+# Frontend:
+#   http://localhost:3000
+#
+# Backend API:
+#   http://localhost:3001
 #
 # Grafana (Dashboards & Logs):
 #   http://localhost:3002
-#   Login: admin / admin123
+#   Login: ${GRAFANA_USER} / ${GRAFANA_PASSWORD}
 #
-# Prometheus (Metrics):
-#   http://localhost:9090
-#
-# cAdvisor (Container Stats):
-#   http://localhost:8080
-#
-# Loki (Log API):
-#   http://localhost:3100
+# NOTE: MongoDB, Redis, Prometheus, cAdvisor, Loki
+# are NOT exposed externally — only accessible
+# between containers on the internal Docker network.
 # ============================================

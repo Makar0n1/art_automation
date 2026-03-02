@@ -44,11 +44,11 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     networks:
       - seo_network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -74,6 +74,7 @@ services:
       - MONGODB_URI=mongodb://seo-mongodb:27017/seo_articles
       - REDIS_HOST=seo-redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - JWT_EXPIRES_IN=${JWT_EXPIRES_IN}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
@@ -105,6 +106,7 @@ services:
       - MONGODB_URI=mongodb://seo-mongodb:27017/seo_articles
       - REDIS_HOST=seo-redis
       - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - JWT_SECRET=${JWT_SECRET}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
       - WORKER_CONCURRENCY=${WORKER_CONCURRENCY}
@@ -252,6 +254,7 @@ services:
     restart: unless-stopped
     environment:
       - REDIS_ADDR=seo-redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - seo_network
     depends_on:
