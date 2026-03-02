@@ -928,31 +928,64 @@ Write the content now:`;
 CRITICAL: The link must be PART OF A PARAGRAPH — within or appended to an existing sentence.
 ABSOLUTELY FORBIDDEN: Placing the link on its own separate line. The link must NEVER appear as a standalone line.`;
         } else {
-          insertionInstruction = `Insert this link INLINE into the text.
+          insertionInstruction = `INLINE LINK INSERTION — GRAMMATICAL INTEGRATION
 
-The anchor phrase is: "${link.anchor}"
+Anchor phrase (search keyword): "${link.anchor}"
+URL: ${link.url}
 
-YOUR TASK: Pick ONE existing sentence and REWRITE it so the anchor phrase becomes a grammatical part of that sentence. The anchor text INSIDE the brackets [${link.anchor}] must stay EXACTLY as-is, but you MUST add proper grammar OUTSIDE the brackets.
+The anchor is a SEARCH KEYWORD that users type into Google. Your job is to weave it into an existing sentence so it reads like natural ${langName} prose.
 
-EXAMPLES of CORRECT insertion in German:
-- Anchor "Ghostwriter Bachelorarbeit" → "...eine professionelle [Ghostwriter Bachelorarbeit](url) kann dabei helfen..."
-- Anchor "Mia Müller" → "...wie die Expertin [Mia Müller](url) betont, ist dabei entscheidend..."
-- Anchor "Ghostwriting Agentur" → "...bei der Wahl einer [Ghostwriting Agentur](url) sollten Sie auf Transparenz achten..."
+ANCHOR RULES — what you CAN and CANNOT change inside [brackets]:
+- ALL keyword words MUST appear inside [brackets] in the SAME ORDER
+- You CAN insert small grammatical particles inside [brackets] if the language grammar REQUIRES it:
+  "zu", "zu den", "für", "von", "im", "am", "zum", "zur", "des", "der", "das", "die", "ein", "eine", "einen" etc.
+- You CANNOT remove, replace, or reorder any keyword word
+- You CANNOT add adjectives or extra content words inside [brackets]
 
-EXAMPLES of WRONG insertion (ABSOLUTELY FORBIDDEN):
-- Placing the link on its OWN LINE between paragraphs ← THIS IS THE #1 ERROR, NEVER DO THIS
-- "[anchor](url)" as a standalone line ← NEVER
-- "...Begriffe wie [anchor](url)..." ← treats anchor as a search term
-- "...auf Seiten wie [anchor](url)..." ← treats as website name
-- "...Mehr Infos: [anchor](url)" ← label style, not prose
+TECHNIQUE — 3 STEPS:
+1. Pick ONE existing sentence that is thematically related to the anchor
+2. REWRITE that sentence so the anchor becomes a grammatical element (subject, object, attribute, adverbial)
+3. Add grammar BOTH inside [brackets] (particles if needed) AND outside (articles, prepositions, case endings)
+
+EXAMPLES (German):
+- Anchor "Bachelorarbeit schreiben lassen"
+  BEFORE: "Viele Studierende stehen unter Zeitdruck bei der Abschlussarbeit."
+  AFTER: "Viele Studierende entscheiden sich, eine [Bachelorarbeit schreiben zu lassen](${link.url}), um den Zeitdruck zu reduzieren."
+  → "zu" inserted inside brackets for infinitive construction — keyword intact
+
+- Anchor "Ghostwriter Masterarbeit"
+  BEFORE: "Professionelle Unterstützung macht den Unterschied."
+  AFTER: "Ein erfahrener [Ghostwriter Masterarbeit](${link.url}) macht dabei den entscheidenden Unterschied."
+  → compound term used as-is, article + adjective outside
+
+- Anchor "Hausarbeit schreiben lassen Preise"
+  BEFORE: "Die Kosten variieren je nach Umfang und Fachgebiet."
+  AFTER: "Die [Hausarbeit schreiben lassen Preise](${link.url}) variieren je nach Umfang, Fachgebiet und Seitenzahl."
+  → anchor used as compound noun subject, no particles needed
+
+- Anchor "Doktorarbeit Hilfe"
+  BEFORE: "Wer Unterstützung sucht, findet verschiedene Angebote."
+  AFTER: "Wer professionelle [Doktorarbeit Hilfe](${link.url}) sucht, findet heute verschiedene seriöse Angebote."
+  → adjective outside, anchor as object
+
+- Anchor "academic writing service" (English)
+  BEFORE: "Students often need professional support."
+  AFTER: "Students who use a reputable [academic writing service](${link.url}) often achieve better results."
+  → article + adjective outside, anchor as object
+
+ABSOLUTELY FORBIDDEN:
+- Link on its OWN LINE (standalone, between paragraphs) ← #1 ERROR, NEVER DO THIS
+- "[anchor](url)" alone on a line ← NEVER
+- "Mehr Infos: [anchor](url)" ← label style, not prose
+- "Seiten wie [anchor](url)" ← treats anchor as website name
+- "Begriffe wie [anchor](url)" ← treats anchor as search term
+- Adding a NEW sentence just for the link ← must REWRITE an existing sentence
 
 RULES:
-- The link MUST be INSIDE an existing paragraph, woven into a sentence
-- Add correct articles, prepositions, case endings AROUND the link as ${langName} grammar requires
-- The link must read as a natural noun phrase in the sentence (subject, object, attribute, etc.)
-- The reader should NOT notice it's a link — it reads as normal text
-- Change ONLY ONE sentence. Keep the rest of the content identical
-- NEVER place the link on a separate blank line — it must be part of running text`;
+- REWRITE one existing sentence — do NOT add new sentences
+- The reader should NOT notice it's a link — reads as natural ${langName} text
+- Keep ALL other content identical — change only the ONE sentence
+- The line with the link MUST have substantial surrounding text (40+ chars without the link)`;
         }
         break;
       case 'list_start':
@@ -969,10 +1002,10 @@ RULES:
     const systemPrompt = `You are a markdown editor inserting exactly ONE internal link into content.
 
 CRITICAL RULES:
-1. Use the EXACT link markdown: ${linkMarkdown}
-2. DO NOT change the anchor text or URL under any circumstances
-3. The content is MARKDOWN - preserve ALL existing formatting (bold, lists, links, etc.)
-4. Make MINIMAL changes to the text — only modify what's needed for the link to fit naturally
+1. The anchor is a search keyword. Keep ALL keyword words inside [brackets] in the same order. You MAY insert small grammatical particles (zu, für, von, im, der, die, das, ein, eine...) inside brackets if the language grammar requires it. NEVER remove or replace keyword words.
+2. DO NOT change the URL under any circumstances
+3. Preserve ALL existing markdown formatting (bold, lists, other links, etc.)
+4. Make MINIMAL changes — only modify what's needed for the link to fit naturally
 5. Write in ${langName}
 6. Return ONLY the updated content, no explanations or commentary
 7. DO NOT wrap output in code blocks`;
@@ -1011,11 +1044,14 @@ Return the updated content with the link inserted:`;
 
       if (!urlFound) {
         logger.warn(`Link URL not found in AI response, force-appending: ${linkMarkdown}`);
-        // Force-append based on display type
         if (link.displayType === 'list_start') {
           updatedContent = `${linkMarkdown}\n\n${updatedContent}`;
         } else if (link.displayType === 'sidebar') {
           updatedContent += `\n\n**See also:** ${linkMarkdown}`;
+        } else if (link.displayType === 'inline') {
+          // AI failed to include the link — retry with a focused prompt on one paragraph
+          logger.warn('Inline link missing from AI response, retrying with focused paragraph prompt');
+          updatedContent = await this.retryInlineLinkInsertion(blockContent, link, language);
         } else {
           updatedContent += `\n\n${linkMarkdown}`;
         }
@@ -1023,55 +1059,114 @@ Return the updated content with the link inserted:`;
         logger.debug(`Link verified in response: ${link.url}`);
       }
 
-      // Post-processing: detect standalone link lines (AI's #1 error)
-      // A standalone link line = a line that is ONLY a markdown link with nothing else
-      if (link.displayType === 'inline') {
-        const lines = updatedContent.split('\n');
-        const standaloneRegex = /^\s*\[[^\]]+\]\([^)]+\)\s*$/;
-        let fixed = false;
-        for (let i = 0; i < lines.length; i++) {
-          if (standaloneRegex.test(lines[i]) && lines[i].includes(link.url)) {
-            // Found standalone link line — merge it into the previous paragraph
-            logger.warn(`Detected standalone link line, merging into previous paragraph: ${lines[i].trim()}`);
-            // Find previous non-empty line
-            let prevIdx = i - 1;
-            while (prevIdx >= 0 && lines[prevIdx].trim() === '') prevIdx--;
-            if (prevIdx >= 0) {
-              // Append link to end of previous paragraph's last sentence
-              const prevLine = lines[prevIdx].trimEnd();
-              const needsSpace = !prevLine.endsWith(' ');
-              lines[prevIdx] = prevLine.replace(/([.!?])\s*$/, (_m, punct) => {
-                return ` – ${lines[i].trim()}${punct}`;
-              });
-              // If no punctuation replacement happened, just append
-              if (lines[prevIdx] === prevLine) {
-                lines[prevIdx] = prevLine + (needsSpace ? ' ' : '') + lines[i].trim();
-              }
-            }
-            lines.splice(i, 1);
-            // Also remove blank line before it if exists
-            if (i > 0 && lines[i - 1]?.trim() === '') {
-              lines.splice(i - 1, 1);
-            }
-            fixed = true;
-            break;
+      // Post-processing for inline: validate link is truly woven into a paragraph
+      if (link.displayType === 'inline' && !link.isAnchorless) {
+        const linkLine = updatedContent.split('\n').find(l => l.includes(link.url));
+        if (linkLine) {
+          const textWithoutLink = linkLine.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
+          // If the line containing the link has less than 40 chars of surrounding text,
+          // the link is isolated (standalone or label-style) — retry
+          if (textWithoutLink.length < 40) {
+            logger.warn(`Link is isolated (only ${textWithoutLink.length} chars around it), retrying: "${linkLine.trim().slice(0, 80)}..."`);
+            updatedContent = await this.retryInlineLinkInsertion(blockContent, link, language);
           }
-        }
-        if (fixed) {
-          updatedContent = lines.join('\n');
         }
       }
 
       return updatedContent;
     } catch (error) {
       logger.error(`Failed to insert single link into block "${blockHeading}"`, { error });
-      // Fallback: append link at the end
       if (link.displayType === 'list_start') {
         return `${linkMarkdown}\n\n${blockContent}`;
       } else if (link.displayType === 'sidebar') {
         return `${blockContent}\n\n**See also:** ${linkMarkdown}`;
       }
       return `${blockContent}\n\n${linkMarkdown}`;
+    }
+  }
+
+  /**
+   * Retry inline link insertion with a focused prompt — picks one paragraph
+   * and asks AI to rewrite ONLY that paragraph with the link woven in.
+   * Much more reliable than the full-content approach.
+   */
+  private async retryInlineLinkInsertion(
+    blockContent: string,
+    link: { url: string; anchor: string; isAnchorless: boolean; displayType: string },
+    language: string
+  ): Promise<string> {
+    const languageNames: Record<string, string> = {
+      'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
+      'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'uk': 'Ukrainian',
+      'nl': 'Dutch', 'pt': 'Portuguese',
+    };
+    const langName = languageNames[language] || 'English';
+    const linkMarkdown = `[${link.anchor}](${link.url})`;
+
+    // Split content into paragraphs and pick the longest prose paragraph
+    const paragraphs = blockContent.split(/\n\n+/);
+    let bestIdx = 0;
+    let bestLen = 0;
+    for (let i = 0; i < paragraphs.length; i++) {
+      const p = paragraphs[i].trim();
+      // Skip headings, lists, tables, short lines
+      if (/^[#|>*\-\d]/.test(p)) continue;
+      if (p.length > bestLen) {
+        bestLen = p.length;
+        bestIdx = i;
+      }
+    }
+
+    const targetParagraph = paragraphs[bestIdx];
+
+    const retryPrompt = `Rewrite this paragraph so that the link is grammatically woven into ONE of its sentences.
+
+PARAGRAPH:
+${targetParagraph}
+
+ANCHOR (search keyword): "${link.anchor}"
+URL: ${link.url}
+LANGUAGE: ${langName}
+
+TECHNIQUE: Pick one sentence. Rewrite it so the anchor becomes a natural grammatical element.
+- Keep ALL keyword words inside [brackets] in the same order
+- You CAN insert grammatical particles inside brackets if needed (zu, für, von, der, die, das, ein, eine...)
+- Add grammar outside brackets too (articles, prepositions, case endings)
+
+Example (German): Anchor "Bachelorarbeit schreiben lassen"
+BEFORE: "Viele Studierende stehen unter Zeitdruck bei der Abschlussarbeit."
+AFTER: "Viele Studierende entscheiden sich, eine [Bachelorarbeit schreiben zu lassen](${link.url}), um den Zeitdruck zu reduzieren."
+→ "zu" inserted inside brackets for correct infinitive grammar
+
+Return ONLY the rewritten paragraph, nothing else.`;
+
+    try {
+      let result = await this.chat(
+        `You rewrite a single paragraph to include a link. Return ONLY the paragraph. No explanations. Write in ${langName}.`,
+        retryPrompt,
+        0.4
+      );
+      result = result.trim().replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
+
+      // Verify URL is in the result
+      if (!result.includes(link.url)) {
+        logger.warn('Retry also failed to include URL, returning original with link appended to paragraph');
+        // Last resort: append naturally to the paragraph
+        const lastSentenceEnd = targetParagraph.search(/[.!?]\s*$/);
+        if (lastSentenceEnd !== -1) {
+          const punct = targetParagraph[lastSentenceEnd];
+          result = targetParagraph.slice(0, lastSentenceEnd) + ` — ${linkMarkdown}` + punct;
+        } else {
+          result = targetParagraph + ` — ${linkMarkdown}.`;
+        }
+      }
+
+      // Replace the target paragraph in the original content
+      paragraphs[bestIdx] = result;
+      return paragraphs.join('\n\n');
+    } catch (retryError) {
+      logger.error('Retry inline link insertion also failed', { retryError });
+      return blockContent + `\n\n${linkMarkdown}`;
     }
   }
 

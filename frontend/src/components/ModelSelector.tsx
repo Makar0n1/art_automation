@@ -115,7 +115,7 @@ export function ModelSelector({ value, onChange, className, label, disabled }: M
 
       {/* Dropdown */}
       {isOpen && (
-        <div className="absolute z-50 mt-1 w-full min-w-[360px] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+        <div className="absolute z-50 mt-1 right-0 w-full min-w-[360px] max-w-[calc(100vw-2rem)] rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
           {/* Search input */}
           <div className="p-2 border-b border-gray-100 dark:border-gray-700">
             <div className="relative">
