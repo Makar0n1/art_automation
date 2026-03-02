@@ -94,9 +94,17 @@ export default function AccountPage() {
     fetchPinStatus();
     // Restore PIN session token from localStorage (persists across navigation)
     const storedToken = localStorage.getItem('pinSessionToken');
-    if (storedToken) {
-      setPinSessionToken(storedToken);
-      setIsPinVerified(true);
+    const storedAt = localStorage.getItem('pinSessionTokenSetAt');
+    if (storedToken && storedAt) {
+      const elapsed = Date.now() - parseInt(storedAt, 10);
+      if (elapsed < 5 * 60 * 1000) {
+        setPinSessionToken(storedToken);
+        setIsPinVerified(true);
+      } else {
+        // Token already expired — clean up
+        localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
+      }
     }
   }, []);
 
@@ -112,6 +120,7 @@ export default function AccountPage() {
         const token = (response.data as { pinSessionToken: string })?.pinSessionToken;
         setPinSessionToken(token);
         localStorage.setItem('pinSessionToken', token);
+        localStorage.setItem('pinSessionTokenSetAt', Date.now().toString());
         setIsPinVerified(true);
         setPinInput('');
         toast.success('Access granted');
@@ -133,11 +142,27 @@ export default function AccountPage() {
     }
   }, [pinInput]);
 
+  // Silent auto-lock: check every 30s if PIN session token has expired (5-min TTL)
+  useEffect(() => {
+    if (!pinSessionToken) return;
+    const interval = setInterval(() => {
+      const storedAt = localStorage.getItem('pinSessionTokenSetAt');
+      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 5 * 60 * 1000) {
+        setPinSessionToken(null);
+        setIsPinVerified(false);
+        localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [pinSessionToken]);
+
   /** Clear PIN session on 403 (expired token) */
   const handleSessionExpired = () => {
     setPinSessionToken(null);
     setIsPinVerified(false);
     localStorage.removeItem('pinSessionToken');
+    localStorage.removeItem('pinSessionTokenSetAt');
     toast.error('PIN session expired. Please verify your PIN again.');
   };
 

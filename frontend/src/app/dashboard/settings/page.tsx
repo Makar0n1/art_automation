@@ -89,8 +89,33 @@ export default function SettingsPage() {
     fetchPinStatus();
     // Restore PIN session token from localStorage (persists across navigation)
     const storedToken = localStorage.getItem('pinSessionToken');
-    if (storedToken) setPinSessionToken(storedToken);
+    const storedAt = localStorage.getItem('pinSessionTokenSetAt');
+    if (storedToken && storedAt) {
+      const elapsed = Date.now() - parseInt(storedAt, 10);
+      if (elapsed < 5 * 60 * 1000) {
+        setPinSessionToken(storedToken);
+      } else {
+        // Token already expired — clean up
+        localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
+      }
+    }
   }, []);
+
+  // Silent auto-lock: check every 30s if PIN session token has expired (5-min TTL)
+  useEffect(() => {
+    if (!pinSessionToken) return;
+    const interval = setInterval(() => {
+      const storedAt = localStorage.getItem('pinSessionTokenSetAt');
+      if (!storedAt || Date.now() - parseInt(storedAt, 10) >= 5 * 60 * 1000) {
+        setPinSessionToken(null);
+        setEditMode(null);
+        localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [pinSessionToken]);
 
   const handleEditClick = (service: EditMode) => {
     if (!hasPinConfigured) {
@@ -119,6 +144,7 @@ export default function SettingsPage() {
         const token = (response.data as { pinSessionToken: string })?.pinSessionToken;
         setPinSessionToken(token);
         localStorage.setItem('pinSessionToken', token);
+        localStorage.setItem('pinSessionTokenSetAt', Date.now().toString());
         setEditMode(pendingEditMode);
         setIsPinModalOpen(false);
         toast.success('PIN verified');
@@ -162,6 +188,7 @@ export default function SettingsPage() {
         // Token expired — clear it and prompt for PIN again
         setPinSessionToken(null);
         localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
         toast.error('PIN session expired. Please verify your PIN again.');
         setEditMode(null);
       } else { toast.error('Failed to save API key'); }
@@ -191,6 +218,7 @@ export default function SettingsPage() {
       if (error instanceof AxiosError && error.response?.status === 403) {
         setPinSessionToken(null);
         localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
         toast.error('PIN session expired. Please verify your PIN again.');
         setEditMode(null);
       } else { toast.error('Failed to save credentials'); }
@@ -220,6 +248,7 @@ export default function SettingsPage() {
       if (error instanceof AxiosError && error.response?.status === 403) {
         setPinSessionToken(null);
         localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
         toast.error('PIN session expired. Please verify your PIN again.');
         setEditMode(null);
       } else { toast.error('Failed to save API key'); }
