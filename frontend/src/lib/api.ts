@@ -74,19 +74,21 @@ export const authApi = {
     return response.data;
   },
 
-  changePassword: async (currentPassword: string, newPassword: string) => {
+  changePassword: async (currentPassword: string, newPassword: string, pinSessionToken?: string) => {
     const response = await api.put<ApiResponse>('/auth/password', {
       currentPassword,
       newPassword,
+      pinSessionToken,
     });
     return response.data;
   },
 
-  changePin: async (newPin: string, currentPin?: string, password?: string) => {
+  changePin: async (newPin: string, currentPin?: string, password?: string, pinSessionToken?: string) => {
     const response = await api.put<ApiResponse>('/auth/pin', {
       newPin,
       currentPin,
       password,
+      pinSessionToken,
     });
     return response.data;
   },
@@ -116,8 +118,8 @@ export const apiKeysApi = {
     return response.data;
   },
 
-  updateOpenRouter: async (apiKey: string, pin?: string) => {
-    const response = await api.put<ApiResponse>('/settings/api-keys/openrouter', { apiKey, pin });
+  updateOpenRouter: async (apiKey: string, pinSessionToken?: string) => {
+    const response = await api.put<ApiResponse>('/settings/api-keys/openrouter', { apiKey, pinSessionToken });
     return response.data;
   },
 
@@ -126,8 +128,8 @@ export const apiKeysApi = {
     return response.data;
   },
 
-  updateSupabase: async (url: string, secretKey: string, pin?: string) => {
-    const response = await api.put<ApiResponse>('/settings/api-keys/supabase', { url, secretKey, pin });
+  updateSupabase: async (url: string, secretKey: string, pinSessionToken?: string) => {
+    const response = await api.put<ApiResponse>('/settings/api-keys/supabase', { url, secretKey, pinSessionToken });
     return response.data;
   },
 
@@ -136,8 +138,8 @@ export const apiKeysApi = {
     return response.data;
   },
 
-  updateFirecrawl: async (apiKey: string, pin?: string) => {
-    const response = await api.put<ApiResponse>('/settings/api-keys/firecrawl', { apiKey, pin });
+  updateFirecrawl: async (apiKey: string, pinSessionToken?: string) => {
+    const response = await api.put<ApiResponse>('/settings/api-keys/firecrawl', { apiKey, pinSessionToken });
     return response.data;
   },
 

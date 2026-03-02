@@ -53,7 +53,7 @@ export default function SettingsPage() {
   const [isPinVerifying, setIsPinVerifying] = useState(false);
   const [pendingEditMode, setPendingEditMode] = useState<EditMode>(null);
   const [hasPinConfigured, setHasPinConfigured] = useState(false);
-  const [verifiedPin, setVerifiedPin] = useState<string | null>(null);
+  const [pinSessionToken, setPinSessionToken] = useState<string | null>(null);
   const [editMode, setEditMode] = useState<EditMode>(null);
 
   const openRouterForm = useForm({ defaultValues: { apiKey: '' } });
@@ -87,10 +87,18 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchMaskedKeys();
     fetchPinStatus();
+    // Restore PIN session token from localStorage (persists across navigation)
+    const storedToken = localStorage.getItem('pinSessionToken');
+    if (storedToken) setPinSessionToken(storedToken);
   }, []);
 
   const handleEditClick = (service: EditMode) => {
     if (!hasPinConfigured) {
+      setEditMode(service);
+      return;
+    }
+    // If we already have a session token, skip PIN modal
+    if (pinSessionToken) {
       setEditMode(service);
       return;
     }
@@ -108,7 +116,9 @@ export default function SettingsPage() {
     try {
       const response = await apiKeysApi.verifyPin(pinInput);
       if (response.success) {
-        setVerifiedPin(pinInput);
+        const token = (response.data as { pinSessionToken: string })?.pinSessionToken;
+        setPinSessionToken(token);
+        localStorage.setItem('pinSessionToken', token);
         setEditMode(pendingEditMode);
         setIsPinModalOpen(false);
         toast.success('PIN verified');
@@ -134,7 +144,6 @@ export default function SettingsPage() {
 
   const handleCancelEdit = () => {
     setEditMode(null);
-    setVerifiedPin(null);
     openRouterForm.reset();
     supabaseForm.reset();
     firecrawlForm.reset();
@@ -143,12 +152,20 @@ export default function SettingsPage() {
   const saveOpenRouter = async (data: { apiKey: string }) => {
     if (!data.apiKey) { toast.error('Please enter an API key'); return; }
     try {
-      const response = await apiKeysApi.updateOpenRouter(data.apiKey, verifiedPin || undefined);
+      const response = await apiKeysApi.updateOpenRouter(data.apiKey, pinSessionToken || undefined);
       if (response.success) {
         toast.success('OpenRouter API key saved');
-        openRouterForm.reset(); setEditMode(null); setVerifiedPin(null); fetchMaskedKeys();
+        openRouterForm.reset(); setEditMode(null); fetchMaskedKeys();
       } else { toast.error(response.error || 'Failed to save API key'); }
-    } catch { toast.error('Failed to save API key'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        // Token expired — clear it and prompt for PIN again
+        setPinSessionToken(null);
+        localStorage.removeItem('pinSessionToken');
+        toast.error('PIN session expired. Please verify your PIN again.');
+        setEditMode(null);
+      } else { toast.error('Failed to save API key'); }
+    }
   };
 
   const testOpenRouter = async () => {
@@ -165,12 +182,19 @@ export default function SettingsPage() {
   const saveSupabase = async (data: { url: string; secretKey: string }) => {
     if (!data.url || !data.secretKey) { toast.error('Please enter both URL and secret key'); return; }
     try {
-      const response = await apiKeysApi.updateSupabase(data.url, data.secretKey, verifiedPin || undefined);
+      const response = await apiKeysApi.updateSupabase(data.url, data.secretKey, pinSessionToken || undefined);
       if (response.success) {
         toast.success('Supabase credentials saved');
-        supabaseForm.reset(); setEditMode(null); setVerifiedPin(null); fetchMaskedKeys();
+        supabaseForm.reset(); setEditMode(null); fetchMaskedKeys();
       } else { toast.error(response.error || 'Failed to save credentials'); }
-    } catch { toast.error('Failed to save credentials'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        setPinSessionToken(null);
+        localStorage.removeItem('pinSessionToken');
+        toast.error('PIN session expired. Please verify your PIN again.');
+        setEditMode(null);
+      } else { toast.error('Failed to save credentials'); }
+    }
   };
 
   const testSupabase = async () => {
@@ -187,12 +211,19 @@ export default function SettingsPage() {
   const saveFirecrawl = async (data: { apiKey: string }) => {
     if (!data.apiKey) { toast.error('Please enter an API key'); return; }
     try {
-      const response = await apiKeysApi.updateFirecrawl(data.apiKey, verifiedPin || undefined);
+      const response = await apiKeysApi.updateFirecrawl(data.apiKey, pinSessionToken || undefined);
       if (response.success) {
         toast.success('Firecrawl API key saved');
-        firecrawlForm.reset(); setEditMode(null); setVerifiedPin(null); fetchMaskedKeys();
+        firecrawlForm.reset(); setEditMode(null); fetchMaskedKeys();
       } else { toast.error(response.error || 'Failed to save API key'); }
-    } catch { toast.error('Failed to save API key'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        setPinSessionToken(null);
+        localStorage.removeItem('pinSessionToken');
+        toast.error('PIN session expired. Please verify your PIN again.');
+        setEditMode(null);
+      } else { toast.error('Failed to save API key'); }
+    }
   };
 
   const testFirecrawl = async () => {

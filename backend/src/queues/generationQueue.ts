@@ -578,8 +578,7 @@ export const startQueueProcessor = () => {
         apiKeys.openRouter
       );
 
-      const MAX_PERPLEXITY_FALLBACKS = 10;
-      let perplexityFallbacksUsed = 0;
+      let perplexitySearchCount = 0;
 
       try {
         // Test connection first
@@ -593,8 +592,6 @@ export const startQueueProcessor = () => {
         const updatedBlocks: ArticleBlock[] = [];
         let totalQuestions = 0;
         let answeredCount = 0;
-        let perplexitySearchCount = 0;
-
         // Count total questions first
         for (const block of freshGeneration.articleBlocks) {
           if (block.questions && block.questions.length > 0) {
@@ -632,10 +629,10 @@ export const startQueueProcessor = () => {
                 await addLog(generationId, 'info', `✅ Found answer for: "${question.substring(0, 50)}..."`, {
                   similarity: Math.round(answer.similarity * 100) + '%',
                 });
-              } else if (perplexityFallbacksUsed < MAX_PERPLEXITY_FALLBACKS) {
+              } else {
                 // Phase 2: Perplexity fallback via OpenRouter
-                perplexityFallbacksUsed++;
-                await addLog(generationId, 'thinking', `🤖 Perplexity search #${perplexityFallbacksUsed}/${MAX_PERPLEXITY_FALLBACKS}: "${question.substring(0, 50)}..."`);
+                perplexitySearchCount++;
+                await addLog(generationId, 'thinking', `🤖 Perplexity search #${perplexitySearchCount}: "${question.substring(0, 50)}..."`);
 
                 answer = await supabase.findAnswerWithPerplexity(
                   question,
@@ -646,15 +643,12 @@ export const startQueueProcessor = () => {
                 if (answer) {
                   answeredQuestions.push(answer);
                   answeredCount++;
-                  perplexitySearchCount++;
                   await addLog(generationId, 'info', `✅ Found answer via Perplexity for: "${question.substring(0, 50)}..."`, {
                     similarity: Math.round(answer.similarity * 100) + '%',
                   });
                 } else {
                   await addLog(generationId, 'thinking', `❌ No answer found for: "${question.substring(0, 50)}..."`);
                 }
-              } else {
-                await addLog(generationId, 'thinking', `⏭️ Skipping question (Perplexity limit reached): "${question.substring(0, 50)}..."`);
               }
 
               // Update progress within Step 4 (43-57%)

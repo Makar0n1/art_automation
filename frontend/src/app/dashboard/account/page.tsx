@@ -1,6 +1,6 @@
 /**
  * Account Settings Page - Password & PIN Management
- * PIN-gated: requires PIN verification with 5-minute session timeout
+ * PIN-gated: requires PIN session token (JWT, 5-min TTL) for protected operations
  */
 
 'use client';
@@ -44,19 +44,16 @@ interface PinFormData {
   password: string;
 }
 
-const PIN_SESSION_MS = 5 * 60 * 1000; // 5 minutes
-
 export default function AccountPage() {
   const { user } = useAuthStore();
 
   /* ─── PIN gate state ─── */
   const [hasPinConfigured, setHasPinConfigured] = useState<boolean | null>(null);
   const [isPinVerified, setIsPinVerified] = useState(false);
-  const [pinVerifiedAt, setPinVerifiedAt] = useState<number | null>(null);
+  const [pinSessionToken, setPinSessionToken] = useState<string | null>(null);
   const [pinInput, setPinInput] = useState('');
   const [isPinLoading, setIsPinLoading] = useState(false);
   const [showGatePin, setShowGatePin] = useState(false);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null);
 
   /* ─── Page state ─── */
   const [isLoading, setIsLoading] = useState(true);
@@ -80,7 +77,7 @@ export default function AccountPage() {
     defaultValues: { currentPin: '', newPin: '', confirmPin: '', password: '' },
   });
 
-  /* ─── Fetch PIN status on mount ─── */
+  /* ─── Fetch PIN status + restore session token on mount ─── */
   useEffect(() => {
     const fetchPinStatus = async () => {
       try {
@@ -95,32 +92,13 @@ export default function AccountPage() {
       }
     };
     fetchPinStatus();
-  }, []);
-
-  /* ─── 5-minute session timer ─── */
-  useEffect(() => {
-    if (!isPinVerified || !pinVerifiedAt) {
-      setTimeLeft(null);
-      return;
+    // Restore PIN session token from localStorage (persists across navigation)
+    const storedToken = localStorage.getItem('pinSessionToken');
+    if (storedToken) {
+      setPinSessionToken(storedToken);
+      setIsPinVerified(true);
     }
-
-    const tick = () => {
-      const remaining = PIN_SESSION_MS - (Date.now() - pinVerifiedAt);
-      if (remaining <= 0) {
-        setIsPinVerified(false);
-        setPinVerifiedAt(null);
-        setPinInput('');
-        setTimeLeft(null);
-        toast('Session expired. Please re-enter PIN.', { icon: '🔒' });
-      } else {
-        setTimeLeft(remaining);
-      }
-    };
-
-    tick();
-    const interval = setInterval(tick, 1000);
-    return () => clearInterval(interval);
-  }, [isPinVerified, pinVerifiedAt]);
+  }, []);
 
   /* ─── PIN gate verification ─── */
   const handlePinGateSubmit = useCallback(async (e: React.FormEvent) => {
@@ -131,8 +109,10 @@ export default function AccountPage() {
     try {
       const response = await apiKeysApi.verifyPin(pinInput);
       if (response.success) {
+        const token = (response.data as { pinSessionToken: string })?.pinSessionToken;
+        setPinSessionToken(token);
+        localStorage.setItem('pinSessionToken', token);
         setIsPinVerified(true);
-        setPinVerifiedAt(Date.now());
         setPinInput('');
         toast.success('Access granted');
       }
@@ -153,15 +133,29 @@ export default function AccountPage() {
     }
   }, [pinInput]);
 
+  /** Clear PIN session on 403 (expired token) */
+  const handleSessionExpired = () => {
+    setPinSessionToken(null);
+    setIsPinVerified(false);
+    localStorage.removeItem('pinSessionToken');
+    toast.error('PIN session expired. Please verify your PIN again.');
+  };
+
   /* ─── Form handlers ─── */
   const handlePasswordChange = async (data: PasswordFormData) => {
     if (data.newPassword !== data.confirmPassword) { toast.error('New passwords do not match'); return; }
     if (data.newPassword.length < 6) { toast.error('Password must be at least 6 characters'); return; }
     try {
-      const response = await authApi.changePassword(data.currentPassword, data.newPassword);
+      const response = await authApi.changePassword(data.currentPassword, data.newPassword, pinSessionToken || undefined);
       if (response.success) { toast.success('Password changed successfully'); passwordForm.reset(); }
       else toast.error(response.error || 'Failed to change password');
-    } catch { toast.error('Failed to change password'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        handleSessionExpired();
+      } else {
+        toast.error('Failed to change password');
+      }
+    }
   };
 
   const handlePinChange = async (data: PinFormData) => {
@@ -171,14 +165,21 @@ export default function AccountPage() {
       const response = await authApi.changePin(
         data.newPin,
         hasPinConfigured ? data.currentPin : undefined,
-        !hasPinConfigured ? data.password : undefined
+        !hasPinConfigured ? data.password : undefined,
+        pinSessionToken || undefined
       );
       if (response.success) {
         toast.success(hasPinConfigured ? 'PIN changed' : 'PIN set up');
         pinForm.reset();
         setHasPinConfigured(true);
       } else toast.error(response.error || 'Failed to change PIN');
-    } catch { toast.error('Failed to change PIN'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        handleSessionExpired();
+      } else {
+        toast.error('Failed to change PIN');
+      }
+    }
   };
 
   const PasswordToggle = ({ show, toggle }: { show: boolean; toggle: () => void }) => (
@@ -190,12 +191,6 @@ export default function AccountPage() {
       {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
     </button>
   );
-
-  const formatTimeLeft = (ms: number): string => {
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  };
 
   /* ─── Loading skeleton ─── */
   if (isLoading) {
@@ -273,12 +268,6 @@ export default function AccountPage() {
               {user?.email} &mdash; Administrator
             </p>
           </div>
-          {isPinVerified && timeLeft !== null && (
-            <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-              <Lock className="h-3.5 w-3.5" />
-              Session: {formatTimeLeft(timeLeft)}
-            </div>
-          )}
         </div>
 
         {/* Password & PIN side by side */}

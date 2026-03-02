@@ -99,3 +99,27 @@ export const verifyToken = (token: string): JwtPayload | null => {
     return null;
   }
 };
+
+/**
+ * Generate a short-lived PIN session token (5 minutes)
+ * Used to authorize sensitive operations (password/PIN/API key changes)
+ */
+export const generatePinSessionToken = (userId: string): string => {
+  return jwt.sign(
+    { userId, type: 'pin_session' },
+    config.jwt.secret,
+    { expiresIn: '5m' }
+  );
+};
+
+/**
+ * Verify PIN session token — returns userId if valid, null if expired/invalid
+ */
+export const verifyPinSessionToken = (token: string, expectedUserId: string): boolean => {
+  try {
+    const decoded = jwt.verify(token, config.jwt.secret) as { userId: string; type: string };
+    return decoded.type === 'pin_session' && decoded.userId === expectedUserId;
+  } catch {
+    return false;
+  }
+};

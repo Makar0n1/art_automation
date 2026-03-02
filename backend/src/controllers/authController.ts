@@ -6,7 +6,7 @@
 
 import { Request, Response } from 'express';
 import { User } from '../models/index.js';
-import { generateToken } from '../middleware/auth.js';
+import { generateToken, verifyPinSessionToken } from '../middleware/auth.js';
 import { ApiResponse, AuthenticatedRequest } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { logger } from '../utils/logger.js';
@@ -165,6 +165,7 @@ export const refreshToken = async (
 /**
  * Change password
  * PUT /api/auth/password
+ * Requires PIN verification if PIN is configured (server-side security gate)
  */
 export const changePassword = async (
   req: AuthenticatedRequest,
@@ -172,7 +173,7 @@ export const changePassword = async (
 ) => {
   try {
     const userId = req.user?.userId;
-    const { currentPassword, newPassword } = req.body;
+    const { currentPassword, newPassword, pinSessionToken } = req.body;
 
     if (!userId) {
       throw new AppError('User not found', 404);
@@ -186,10 +187,20 @@ export const changePassword = async (
       throw new AppError('New password must be at least 6 characters', 400);
     }
 
-    // Get user with password
-    const user = await User.findById(userId).select('+password');
+    // Get user with password and PIN
+    const user = await User.findById(userId).select('+password +pin');
     if (!user) {
       throw new AppError('User not found', 404);
+    }
+
+    // SERVER-SIDE PIN GATE: if PIN is configured, verify session token
+    if (user.pin) {
+      if (!pinSessionToken) {
+        throw new AppError('PIN session required. Please verify your PIN first.', 403);
+      }
+      if (!verifyPinSessionToken(pinSessionToken, userId)) {
+        throw new AppError('PIN session expired or invalid. Please verify your PIN again.', 403);
+      }
     }
 
     // Verify current password
@@ -221,6 +232,7 @@ export const changePassword = async (
 /**
  * Change PIN for API keys
  * PUT /api/auth/pin
+ * Requires PIN verification if PIN is already configured (server-side security gate)
  */
 export const changePin = async (
   req: AuthenticatedRequest,
@@ -228,7 +240,7 @@ export const changePin = async (
 ) => {
   try {
     const userId = req.user?.userId;
-    const { currentPin, newPin, password } = req.body;
+    const { currentPin, newPin, password, pinSessionToken } = req.body;
 
     if (!userId) {
       throw new AppError('User not found', 404);
@@ -248,14 +260,23 @@ export const changePin = async (
       throw new AppError('User not found', 404);
     }
 
-    // If PIN already exists, verify current PIN
+    // If PIN already exists, verify session token + current PIN for change
     if (user.pin) {
+      // SERVER-SIDE PIN GATE: verify session token
+      if (!pinSessionToken) {
+        throw new AppError('PIN session required. Please verify your PIN first.', 403);
+      }
+      if (!verifyPinSessionToken(pinSessionToken, userId)) {
+        throw new AppError('PIN session expired or invalid. Please verify your PIN again.', 403);
+      }
+
+      // Also verify currentPin specifically for the change operation
       if (!currentPin) {
         throw new AppError('Current PIN is required', 400);
       }
-      const isPinValid = await user.comparePin(currentPin);
-      if (!isPinValid) {
-        throw new AppError('Current PIN is incorrect', 401);
+      const isCurrentPinValid = await user.comparePin(currentPin);
+      if (!isCurrentPinValid) {
+        throw new AppError('Current PIN is incorrect', 403);
       }
     } else {
       // If no PIN exists, require password verification for first-time PIN setup
@@ -272,11 +293,11 @@ export const changePin = async (
     user.pin = newPin;
     await user.save();
 
-    logger.info(`PIN ${user.pin ? 'changed' : 'set'} for user ${userId}`);
+    logger.info(`PIN changed for user ${userId}`);
 
     res.json({
       success: true,
-      message: user.pin ? 'PIN changed successfully' : 'PIN set successfully',
+      message: 'PIN changed successfully',
     });
   } catch (error) {
     if (error instanceof AppError) {

@@ -8,11 +8,29 @@ import { Response } from 'express';
 import { User, PinAttempt } from '../models/index.js';
 import { AuthenticatedRequest, ApiResponse } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { generatePinSessionToken, verifyPinSessionToken } from '../middleware/auth.js';
 import { ApiKeyValidator } from '../services/ApiKeyValidator.js';
 import { encrypt, decrypt, maskSensitiveData } from '../services/CryptoService.js';
 import { logger } from '../utils/logger.js';
 
 const MAX_PIN_ATTEMPTS = 3;
+
+/**
+ * Verify PIN session token from request body.
+ * Throws 403 if user has PIN configured but token is missing/invalid/expired.
+ */
+const requirePinSession = async (userId: string, pinSessionToken?: string): Promise<void> => {
+  const user = await User.findById(userId).select('+pin');
+  if (!user?.pin) return; // No PIN configured — no gate
+
+  if (!pinSessionToken) {
+    throw new AppError('PIN session required. Please verify your PIN first.', 403);
+  }
+
+  if (!verifyPinSessionToken(pinSessionToken, userId)) {
+    throw new AppError('PIN session expired or invalid. Please verify your PIN again.', 403);
+  }
+};
 
 /**
  * Get client IP address from request
@@ -140,12 +158,15 @@ export const verifyPin = async (
       return;
     }
 
-    // Success - reset attempts
+    // Success - reset attempts and generate session token
     await resetPinAttempts(clientIp, userId);
+
+    const pinSessionToken = generatePinSessionToken(userId);
 
     res.json({
       success: true,
       message: 'PIN verified',
+      data: { pinSessionToken },
     });
   } catch (error) {
     if (error instanceof AppError) {
@@ -234,7 +255,7 @@ export const updateOpenRouter = async (
 ) => {
   try {
     const userId = req.user?.userId;
-    const { apiKey, pin } = req.body;
+    const { apiKey, pinSessionToken } = req.body;
 
     if (!userId) {
       throw new AppError('User not found', 404);
@@ -244,17 +265,8 @@ export const updateOpenRouter = async (
       throw new AppError('API key is required', 400);
     }
 
-    // Verify PIN if user has PIN configured
-    const userWithPin = await User.findById(userId).select('+pin');
-    if (userWithPin?.pin) {
-      if (!pin) {
-        throw new AppError('PIN is required to change API keys', 403);
-      }
-      const isPinValid = await userWithPin.comparePin(pin);
-      if (!isPinValid) {
-        throw new AppError('Invalid PIN', 403);
-      }
-    }
+    // Verify PIN session token
+    await requirePinSession(userId, pinSessionToken);
 
     // Encrypt API key before saving
     const encryptedKey = encrypt(apiKey);
@@ -340,7 +352,7 @@ export const updateSupabase = async (
 ) => {
   try {
     const userId = req.user?.userId;
-    const { url, secretKey, pin } = req.body;
+    const { url, secretKey, pinSessionToken } = req.body;
 
     if (!userId) {
       throw new AppError('User not found', 404);
@@ -350,17 +362,8 @@ export const updateSupabase = async (
       throw new AppError('URL and secret key are required', 400);
     }
 
-    // Verify PIN if user has PIN configured
-    const userWithPin = await User.findById(userId).select('+pin');
-    if (userWithPin?.pin) {
-      if (!pin) {
-        throw new AppError('PIN is required to change API keys', 403);
-      }
-      const isPinValid = await userWithPin.comparePin(pin);
-      if (!isPinValid) {
-        throw new AppError('Invalid PIN', 403);
-      }
-    }
+    // Verify PIN session token
+    await requirePinSession(userId, pinSessionToken);
 
     // Encrypt secret key before saving (URL is not encrypted)
     const encryptedKey = encrypt(secretKey);
@@ -451,7 +454,7 @@ export const updateFirecrawl = async (
 ) => {
   try {
     const userId = req.user?.userId;
-    const { apiKey, pin } = req.body;
+    const { apiKey, pinSessionToken } = req.body;
 
     if (!userId) {
       throw new AppError('User not found', 404);
@@ -461,17 +464,8 @@ export const updateFirecrawl = async (
       throw new AppError('API key is required', 400);
     }
 
-    // Verify PIN if user has PIN configured
-    const userWithPin = await User.findById(userId).select('+pin');
-    if (userWithPin?.pin) {
-      if (!pin) {
-        throw new AppError('PIN is required to change API keys', 403);
-      }
-      const isPinValid = await userWithPin.comparePin(pin);
-      if (!isPinValid) {
-        throw new AppError('Invalid PIN', 403);
-      }
-    }
+    // Verify PIN session token
+    await requirePinSession(userId, pinSessionToken);
 
     // Encrypt API key before saving
     const encryptedKey = encrypt(apiKey);
