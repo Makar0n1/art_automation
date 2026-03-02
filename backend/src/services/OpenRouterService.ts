@@ -1092,16 +1092,26 @@ Return the updated content with the link inserted:`;
     const langName = languageNames[language] || 'English';
     const linkMarkdown = `[${link.anchor}](${link.url})`;
 
-    // Split content into paragraphs and pick the best prose paragraph
+    // Split content into paragraphs and pick the best THEMATICALLY RELEVANT prose paragraph
     const paragraphs = blockContent.split(/\n\n+/);
+    const anchorWords = link.anchor.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
     let bestIdx = 0;
-    let bestLen = 0;
+    let bestScore = -1;
     for (let i = 0; i < paragraphs.length; i++) {
       const p = paragraphs[i].trim();
       // Skip headings, lists, tables, short lines
       if (/^[#|>*\-\d]/.test(p)) continue;
-      if (p.length > bestLen) {
-        bestLen = p.length;
+      if (p.length < 60) continue; // too short to insert a link into
+
+      // Score = base length + bonus for thematic overlap with anchor
+      const pLower = p.toLowerCase();
+      let score = p.length;
+      for (const word of anchorWords) {
+        if (pLower.includes(word)) score += 200; // strong bonus for topic match
+      }
+      if (score > bestScore) {
+        bestScore = score;
         bestIdx = i;
       }
     }
@@ -1145,75 +1155,121 @@ FORBIDDEN:
 
 Return ONLY the rewritten paragraph:`;
 
-    // Attempt 1: temperature 0.4
+    // Validation helper: check if link is properly woven into text (not standalone)
+    const minSurroundingChars = Math.max(20, 50 - link.anchor.length);
+
+    const validateResult = (result: string): boolean => {
+      const urlPresent = result.includes(link.url) ||
+        result.includes(link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/');
+      if (!urlPresent) return false;
+
+      const linkLine = result.split('\n').find(l => l.includes(link.url));
+      if (!linkLine) return false;
+
+      const textAround = linkLine.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
+      return textAround.length >= minSurroundingChars;
+    };
+
+    // Attempt 1 & 2: rewrite existing sentence (temp 0.4, then 0.6)
     for (const temp of [0.4, 0.6]) {
       try {
         let result = await this.chat(systemPrompt, userPrompt, temp);
         result = result.trim().replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
 
-        // Validate: URL present AND not standalone
+        if (validateResult(result)) {
+          const linkLine = result.split('\n').find(l => l.includes(link.url));
+          logger.info(`Inline link inserted successfully (temp=${temp}): "${linkLine?.trim().slice(0, 100)}..."`);
+          paragraphs[bestIdx] = result;
+          return paragraphs.join('\n\n');
+        }
+
         const urlPresent = result.includes(link.url) ||
           result.includes(link.url.endsWith('/') ? link.url.slice(0, -1) : link.url + '/');
-
-        if (urlPresent) {
-          const linkLine = result.split('\n').find(l => l.includes(link.url));
-          if (linkLine) {
-            const textAround = linkLine.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
-            if (textAround.length >= 40) {
-              // Success — link is properly woven in
-              logger.info(`Inline link inserted successfully (temp=${temp}): "${linkLine.trim().slice(0, 100)}..."`);
-              paragraphs[bestIdx] = result;
-              return paragraphs.join('\n\n');
-            }
-            logger.warn(`Inline link isolated (${textAround.length} chars, temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'will force-insert'}`);
-          }
+        if (!urlPresent) {
+          logger.warn(`URL missing from AI response (temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'trying add-sentence strategy'}`);
         } else {
-          logger.warn(`URL missing from AI response (temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'will force-insert'}`);
+          const linkLine = result.split('\n').find(l => l.includes(link.url));
+          const textAround = linkLine?.replace(/\[[^\]]+\]\([^)]+\)/, '').trim();
+          logger.warn(`Inline link isolated (${textAround?.length || 0}/${minSurroundingChars} chars, temp=${temp}), ${temp === 0.4 ? 'retrying...' : 'trying add-sentence strategy'}`);
         }
       } catch (error) {
         logger.warn(`AI call failed (temp=${temp}): ${error}`);
       }
     }
 
-    // Both attempts failed — deterministic fallback
-    logger.warn(`Both AI attempts failed for inline link [${link.anchor}], using deterministic fallback`);
-    paragraphs[bestIdx] = this.forceInsertLinkIntoParagraph(targetParagraph, linkMarkdown);
+    // Attempt 3: ADD a new sentence instead of rewriting (easier for AI)
+    try {
+      const addSentencePrompt = `Add ONE short sentence to the END of this paragraph that naturally contains the link.
+
+PARAGRAPH:
+${targetParagraph}
+
+LINK: ${linkMarkdown}
+
+RULES:
+- Add the sentence AFTER the last sentence of the paragraph (same paragraph, no blank line)
+- The anchor "${link.anchor}" must appear inside [brackets] with ALL words in order
+- The new sentence must be grammatically correct ${langName}
+- Keep it short (10-20 words) and relevant to the paragraph topic
+- Return the FULL paragraph (original + your new sentence)
+
+Return ONLY the updated paragraph:`;
+
+      let result = await this.chat(systemPrompt, addSentencePrompt, 0.5);
+      result = result.trim().replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
+
+      if (validateResult(result)) {
+        const linkLine = result.split('\n').find(l => l.includes(link.url));
+        logger.info(`Inline link inserted via add-sentence (attempt 3): "${linkLine?.trim().slice(0, 100)}..."`);
+        paragraphs[bestIdx] = result;
+        return paragraphs.join('\n\n');
+      }
+      logger.warn(`Add-sentence attempt also failed validation, using deterministic fallback`);
+    } catch (error) {
+      logger.warn(`Add-sentence AI call failed: ${error}`);
+    }
+
+    // All 3 AI attempts failed — deterministic fallback
+    logger.warn(`All AI attempts failed for inline link [${link.anchor}], using deterministic fallback`);
+    paragraphs[bestIdx] = this.forceInsertLinkIntoParagraph(targetParagraph, linkMarkdown, language);
     return paragraphs.join('\n\n');
   }
 
   /**
-   * Deterministic fallback: insert a link into a paragraph's last sentence.
-   * Finds the last sentence-ending punctuation and inserts the link before it.
-   * Guaranteed to produce an inline link, never standalone.
+   * Deterministic fallback: append a short bridging sentence with the link
+   * at the end of the paragraph. Uses language-aware connector.
+   * Guaranteed to produce an inline link within a paragraph, never standalone.
    */
-  private forceInsertLinkIntoParagraph(paragraph: string, linkMarkdown: string): string {
-    // Find sentences by splitting on sentence-ending punctuation
-    // We want to insert the link into the last real sentence
-    const sentences = paragraph.split(/(?<=[.!?])\s+/);
+  private forceInsertLinkIntoParagraph(paragraph: string, linkMarkdown: string, language: string = 'en'): string {
+    // Language-aware bridging sentence appended at end of paragraph
+    // Uses "see also" / "vgl." / "см." style — compact, always grammatical
+    const connectors: Record<string, string> = {
+      'de': ', vgl.',
+      'en': ', see',
+      'ru': ', см.',
+      'fr': ', voir',
+      'es': ', ver',
+      'it': ', vedi',
+      'pl': ', zob.',
+      'uk': ', див.',
+      'nl': ', zie',
+      'pt': ', ver',
+    };
+    const connector = connectors[language] || connectors['en'];
 
-    if (sentences.length >= 2) {
-      // Insert before the last sentence's final punctuation
-      const lastSentence = sentences[sentences.length - 1];
-      const punctMatch = lastSentence.match(/([.!?])\s*$/);
-      if (punctMatch) {
-        const punct = punctMatch[1];
-        const idx = lastSentence.lastIndexOf(punct);
-        sentences[sentences.length - 1] = lastSentence.slice(0, idx) + ` — ${linkMarkdown}` + punct;
-      } else {
-        sentences[sentences.length - 1] = lastSentence + ` — ${linkMarkdown}.`;
-      }
-      return sentences.join(' ');
-    }
+    // Find the last sentence and append the link reference to it
+    const trimmed = paragraph.trimEnd();
+    const punctMatch = trimmed.match(/([.!?])\s*$/);
 
-    // Single sentence paragraph — insert before final punctuation
-    const punctMatch = paragraph.match(/([.!?])\s*$/);
     if (punctMatch) {
+      // Replace final punctuation with connector + link + punctuation
       const punct = punctMatch[1];
-      const idx = paragraph.lastIndexOf(punct);
-      return paragraph.slice(0, idx) + ` — ${linkMarkdown}` + punct;
+      const idx = trimmed.lastIndexOf(punct);
+      return trimmed.slice(0, idx) + `${connector} ${linkMarkdown}` + punct;
     }
 
-    return paragraph + ` — ${linkMarkdown}.`;
+    // No punctuation — append with connector
+    return trimmed + `${connector} ${linkMarkdown}.`;
   }
 
   /**

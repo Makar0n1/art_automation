@@ -1220,14 +1220,21 @@ export const startQueueProcessor = () => {
                     if (p.length > bestLen) { bestLen = p.length; bestIdx = i; }
                   }
                   if (bestIdx >= 0 && bestLen > 40) {
-                    // Insert before the last punctuation in the paragraph
-                    const p = paragraphs[bestIdx];
+                    // Insert link as compact reference at end of last sentence
+                    const lang = generation.config.language || 'en';
+                    const connectors: Record<string, string> = {
+                      'de': ', vgl.', 'en': ', see', 'ru': ', см.', 'fr': ', voir',
+                      'es': ', ver', 'it': ', vedi', 'pl': ', zob.', 'uk': ', див.',
+                      'nl': ', zie', 'pt': ', ver',
+                    };
+                    const connector = connectors[lang] || connectors['en'];
+                    const p = paragraphs[bestIdx].trimEnd();
                     const punctMatch = p.match(/([.!?])\s*$/);
                     if (punctMatch) {
                       const lastIdx = p.lastIndexOf(punctMatch[1]);
-                      paragraphs[bestIdx] = p.slice(0, lastIdx) + ` — ${linkMarkdown}` + punctMatch[1];
+                      paragraphs[bestIdx] = p.slice(0, lastIdx) + `${connector} ${linkMarkdown}` + punctMatch[1];
                     } else {
-                      paragraphs[bestIdx] = p + ` — ${linkMarkdown}.`;
+                      paragraphs[bestIdx] = p + `${connector} ${linkMarkdown}.`;
                     }
                     finalContent = paragraphs.join('\n\n');
                   } else {
