@@ -207,6 +207,21 @@ const GenerationSchema = new Schema<IGeneration>(
     article: { type: String }, // Full article in markdown format
     seoTitle: { type: String }, // SEO optimized title (max 60 chars)
     seoDescription: { type: String }, // SEO meta description (max 160 chars)
+    // Cost analytics
+    tokenUsage: {
+      type: new Schema({
+        promptTokens: { type: Number, default: 0 },
+        completionTokens: { type: Number, default: 0 },
+        totalTokens: { type: Number, default: 0 },
+      }, { _id: false }),
+    },
+    modelPricing: {
+      type: new Schema({
+        prompt: { type: String },
+        completion: { type: String },
+      }, { _id: false }),
+    },
+    firecrawlCredits: { type: Number },
     error: { type: String },
     queuePosition: { type: Number },
     startedAt: { type: Date },

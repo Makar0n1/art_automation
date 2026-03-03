@@ -403,6 +403,9 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
       article: null,
       seoTitle: null,
       seoDescription: null,
+      tokenUsage: null,
+      modelPricing: null,
+      firecrawlCredits: null,
       error: null,
       logs: [
         {
@@ -530,6 +533,11 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
         article: updatedArticle,
         generatedArticle: updatedArticle,
       },
+      $inc: {
+        'tokenUsage.promptTokens': usage.promptTokens,
+        'tokenUsage.completionTokens': usage.completionTokens,
+        'tokenUsage.totalTokens': usage.totalTokens,
+      },
       $push: { logs: { $each: [startLog, completedLog] } },
     });
 
@@ -613,6 +621,11 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
 
     await Generation.findByIdAndUpdate(id, {
       $set: { seoTitle: title, seoDescription: description },
+      $inc: {
+        'tokenUsage.promptTokens': usage.promptTokens,
+        'tokenUsage.completionTokens': usage.completionTokens,
+        'tokenUsage.totalTokens': usage.totalTokens,
+      },
       $push: { logs: { $each: [startLog, completedLog] } },
     });
 

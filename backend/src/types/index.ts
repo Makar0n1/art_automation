@@ -215,6 +215,10 @@ export interface IGeneration extends Document {
   article?: string; // Full article in markdown format
   seoTitle?: string; // SEO optimized title (max 60 chars)
   seoDescription?: string; // SEO meta description (max 160 chars)
+  // Cost analytics
+  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  modelPricing?: { prompt: string; completion: string };
+  firecrawlCredits?: number;
   error?: string;
   queuePosition?: number;
   startedAt?: Date;

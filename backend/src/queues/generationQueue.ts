@@ -16,6 +16,38 @@ import { publishSocketEvent } from '../utils/redis.js';
 import { decrypt } from '../services/CryptoService.js';
 
 /**
+ * Fetch model pricing from OpenRouter API (cached for 1 hour)
+ */
+let pricingCache: { data: Map<string, { prompt: string; completion: string }>; fetchedAt: number } | null = null;
+
+const fetchModelPricing = async (
+  apiKey: string,
+  modelId: string
+): Promise<{ prompt: string; completion: string } | null> => {
+  try {
+    // Return from cache if fresh (1 hour)
+    if (pricingCache && Date.now() - pricingCache.fetchedAt < 3600000) {
+      return pricingCache.data.get(modelId) || null;
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { 'Authorization': `Bearer ${apiKey}` },
+    });
+    if (!response.ok) return null;
+
+    const data = await response.json() as { data: Array<{ id: string; pricing?: { prompt: string; completion: string } }> };
+    const map = new Map<string, { prompt: string; completion: string }>();
+    for (const m of data.data || []) {
+      if (m.pricing) map.set(m.id, { prompt: m.pricing.prompt, completion: m.pricing.completion });
+    }
+    pricingCache = { data: map, fetchedAt: Date.now() };
+    return map.get(modelId) || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Helper to get decrypted API keys from user
  */
 interface DecryptedApiKeys {
@@ -1490,11 +1522,23 @@ export const startQueueProcessor = () => {
       }
     }
 
-    // Mark as completed
+    // Mark as completed + save cost analytics
     await updateProgress(generationId, GenerationStatus.COMPLETED, 100);
+
+    const completionApiKeys = getDecryptedApiKeys(user);
+    const modelPricing = completionApiKeys.openRouter
+      ? await fetchModelPricing(completionApiKeys.openRouter, aiModel)
+      : null;
     await Generation.findByIdAndUpdate(generationId, {
       currentStep: 'completed',
       completedAt: new Date(),
+      tokenUsage: {
+        promptTokens: totalPromptTokens,
+        completionTokens: totalCompletionTokens,
+        totalTokens,
+      },
+      modelPricing: modelPricing || undefined,
+      firecrawlCredits: 11,
     });
 
     // Log total pipeline duration and token usage

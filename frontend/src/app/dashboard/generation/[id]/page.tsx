@@ -26,6 +26,7 @@ import {
   Settings,
   Maximize2,
   Sparkles,
+  DollarSign,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -42,6 +43,7 @@ import { ModelSelector } from '@/components/ModelSelector';
 import { BlockContextMenu } from '@/components/BlockContextMenu';
 import { BlockEditModal } from '@/components/BlockEditModal';
 import { SeoEditModal } from '@/components/SeoEditModal';
+import { CostModal } from '@/components/CostModal';
 import { generationsApi } from '@/lib/api';
 import { initSocket, subscribeToGeneration } from '@/lib/socket';
 import { ArticleBlock, Generation, GenerationLog, GenerationStatus } from '@/types';
@@ -99,6 +101,7 @@ export default function GenerationPage() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; blockId: number } | null>(null);
   const [editingBlock, setEditingBlock] = useState<ArticleBlock | null>(null);
   const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
+  const [isCostOpen, setIsCostOpen] = useState(false);
   const pendingScrollBlockIdRef = useRef<number | null>(null);
 
   /* refs */
@@ -123,10 +126,6 @@ export default function GenerationPage() {
   const currentBlockId = isInProgress && hasBlocks
     ? (blocks.find(b => !b.content)?.id ?? -1)
     : -1;
-
-  // Zone flex ratios by state
-  const planFlex   = isCompleted ? 35 : isFailed ? 40 : 50;
-  const outputFlex = isCompleted ? 65 : isFailed ? 60 : 50;
 
   /* ─── effects ─── */
 
@@ -386,162 +385,91 @@ export default function GenerationPage() {
       {/* ════════════════ Main two-column grid ════════════════ */}
       <div className="flex-1 min-h-0 grid grid-cols-[1fr_minmax(260px,30%)] gap-3">
 
-        {/* ──── Left column: Plan zone + Output zone ──── */}
+        {/* ──── Left column: Meta → Article + Structure side-by-side ──── */}
         <div className="min-h-0 flex flex-col gap-2">
 
-          {/* Plan zone */}
-          <div className="min-h-0 flex flex-col gap-2 overflow-hidden" style={{ flex: planFlex }}>
-
-            {/* Error banner — Failed only */}
-            {isFailed && generation.error && (
-              <div className="shrink-0 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-800 dark:bg-red-900/20">
-                <div className="flex items-center gap-2 min-w-0">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold text-red-800 dark:text-red-300">Generation Failed</p>
-                    <p className="truncate text-[11px] text-red-600 dark:text-red-400">{generation.error}</p>
-                  </div>
+          {/* Error banner — Failed only */}
+          {isFailed && generation.error && (
+            <div className="shrink-0 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-800 dark:bg-red-900/20">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-red-800 dark:text-red-300">Generation Failed</p>
+                  <p className="truncate text-[11px] text-red-600 dark:text-red-400">{generation.error}</p>
                 </div>
-                {isApiKeyError(generation.error).isApiError && (
-                  <Link href="/dashboard/settings">
-                    <Button variant="secondary" size="sm">Settings</Button>
-                  </Link>
-                )}
               </div>
-            )}
+              {isApiKeyError(generation.error).isApiError && (
+                <Link href="/dashboard/settings">
+                  <Button variant="secondary" size="sm">Settings</Button>
+                </Link>
+              )}
+            </div>
+          )}
 
-            {/* Article Structure card */}
-            <Card className="card-shine flex min-h-0 flex-1 flex-col overflow-hidden !p-0">
-              <div className="shrink-0 flex items-center gap-2 border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
-                <List className="h-3.5 w-3.5 text-gray-400" />
-                <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
-                  Article Structure
-                  {hasBlocks && (
-                    <span className="ml-1 font-normal text-gray-400">
-                      ({blocksWithContent.length}/{blocks.length})
-                    </span>
-                  )}
-                </span>
-              </div>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5">
-                {!hasBlocks ? (
-                  <div className="flex h-full items-center justify-center text-center text-xs text-gray-400">
-                    <div>
-                      <Clock className="mx-auto h-5 w-5 opacity-40" />
-                      <p className="mt-1">
-                        {isQueued ? 'Waiting in queue\u2026' : isInProgress ? 'Analyzing structure\u2026' : 'Structure not generated'}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-0.5">
-                    {blocks.map(block => {
-                      const done      = !!block.content;
-                      const isCurrent = block.id === currentBlockId;
-                      return (
-                        <button
-                          key={block.id}
-                          id={`structure-block-${block.id}`}
-                          type="button"
-                          onClick={() => done && scrollToBlock(block.id)}
-                          disabled={!done}
-                          className={cn(
-                            'w-full rounded-md px-2.5 py-1.5 text-left text-xs transition-all',
-                            block.type === 'h3' && 'pl-6',
-                            done && 'cursor-pointer hover:bg-gray-100/80 dark:hover:bg-gray-700/40',
-                            !done && !isCurrent && 'opacity-50',
-                            isCurrent && 'bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-900/20 dark:ring-blue-700',
-                          )}
-                        >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            {done ? (
-                              <Check className="h-3 w-3 shrink-0 text-emerald-500" />
-                            ) : isCurrent ? (
-                              <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
-                            ) : (
-                              <div className="h-3 w-3 shrink-0 rounded-full border border-gray-300 dark:border-gray-600" />
-                            )}
-                            <Badge
-                              variant={done ? 'success' : isCurrent ? 'info' : 'default'}
-                              size="sm"
-                              className="shrink-0 !text-[10px] !px-1.5 !py-0"
-                            >
-                              {block.type?.toUpperCase() || 'BLOCK'}
-                            </Badge>
-                            <span className={cn(
-                              'min-w-0 truncate',
-                              done ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400',
-                            )}>
-                              {block.heading || '(No heading)'}
-                            </span>
-                            {done && (
-                              <span className="ml-auto shrink-0 text-[10px] text-gray-400">
-                                {block.content!.split(/\s+/).length}w
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </Card>
-
-            {/* SEO Metadata — stacked with labeled copy buttons */}
-            {hasMeta && (
-              <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+          {/* SEO Metadata — full width on top */}
+          {hasMeta && (
+            <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+              <div className="flex justify-end gap-1">
                 {isCompleted && (
-                  <div className="flex justify-end">
-                    <button
-                      onClick={() => setIsSeoEditOpen(true)}
-                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-                    >
-                      <Sparkles className="h-3 w-3" />
-                      Edit with AI
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => setIsCostOpen(true)}
+                    className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                  >
+                    <DollarSign className="h-3 w-3" />
+                    Cost
+                  </button>
                 )}
-                {generation.seoTitle && (
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                        SEO Title
-                        <span className="ml-1 font-normal text-emerald-500">({generation.seoTitle.length}/60)</span>
-                      </span>
-                      <p className="mt-0.5 text-sm text-gray-900 dark:text-white leading-snug">{generation.seoTitle}</p>
-                    </div>
-                    <button
-                      onClick={copySeoTitle}
-                      className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                    >
-                      {isTitleCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Title</>}
-                    </button>
-                  </div>
-                )}
-                {generation.seoDescription && (
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                        SEO Description
-                        <span className="ml-1 font-normal text-emerald-500">({generation.seoDescription.length}/160)</span>
-                      </span>
-                      <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300 leading-snug">{generation.seoDescription}</p>
-                    </div>
-                    <button
-                      onClick={copySeoDescription}
-                      className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                    >
-                      {isDescCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Desc</>}
-                    </button>
-                  </div>
+                {isCompleted && (
+                  <button
+                    onClick={() => setIsSeoEditOpen(true)}
+                    className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    Edit with AI
+                  </button>
                 )}
               </div>
-            )}
-          </div>
+              {generation.seoTitle && (
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      SEO Title
+                      <span className="ml-1 font-normal text-emerald-500">({generation.seoTitle.length}/60)</span>
+                    </span>
+                    <p className="mt-0.5 text-sm text-gray-900 dark:text-white leading-snug">{generation.seoTitle}</p>
+                  </div>
+                  <button
+                    onClick={copySeoTitle}
+                    className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                  >
+                    {isTitleCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Title</>}
+                  </button>
+                </div>
+              )}
+              {generation.seoDescription && (
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      SEO Description
+                      <span className="ml-1 font-normal text-emerald-500">({generation.seoDescription.length}/160)</span>
+                    </span>
+                    <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300 leading-snug">{generation.seoDescription}</p>
+                  </div>
+                  <button
+                    onClick={copySeoDescription}
+                    className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                  >
+                    {isDescCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Desc</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
-          {/* Output zone — Generated Article */}
-          <div className="min-h-0 flex flex-col" style={{ flex: outputFlex }}>
+          {/* Content area: Article + Structure side by side */}
+          <div className="flex flex-1 min-h-0 gap-2">
+
+            {/* Article Card — takes remaining width */}
             <Card className="card-shine flex min-h-0 flex-1 flex-col overflow-hidden !p-0">
               {/* Sticky header with Copy */}
               <div className="shrink-0 flex items-center justify-between border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
@@ -611,6 +539,61 @@ export default function GenerationPage() {
                 )}
               </div>
             </Card>
+
+            {/* Structure panel — fixed width sidebar */}
+            {hasBlocks && (
+              <Card className="card-shine flex w-[220px] shrink-0 min-h-0 flex-col overflow-hidden !p-0">
+                <div className="shrink-0 flex items-center gap-2 border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
+                  <List className="h-3.5 w-3.5 text-gray-400" />
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                    Structure
+                    <span className="ml-1 font-normal text-gray-400">
+                      ({blocksWithContent.length}/{blocks.length})
+                    </span>
+                  </span>
+                </div>
+                <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5">
+                  <div className="space-y-0.5">
+                    {blocks.map(block => {
+                      const done      = !!block.content;
+                      const isCurrent = block.id === currentBlockId;
+                      return (
+                        <button
+                          key={block.id}
+                          id={`structure-block-${block.id}`}
+                          type="button"
+                          onClick={() => done && scrollToBlock(block.id)}
+                          disabled={!done}
+                          className={cn(
+                            'w-full rounded-md px-2 py-1 text-left text-[11px] transition-all',
+                            block.type === 'h3' && 'pl-5',
+                            done && 'cursor-pointer hover:bg-gray-100/80 dark:hover:bg-gray-700/40',
+                            !done && !isCurrent && 'opacity-50',
+                            isCurrent && 'bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-900/20 dark:ring-blue-700',
+                          )}
+                        >
+                          <div className="flex items-center gap-1 min-w-0">
+                            {done ? (
+                              <Check className="h-2.5 w-2.5 shrink-0 text-emerald-500" />
+                            ) : isCurrent ? (
+                              <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-blue-500" />
+                            ) : (
+                              <div className="h-2.5 w-2.5 shrink-0 rounded-full border border-gray-300 dark:border-gray-600" />
+                            )}
+                            <span className={cn(
+                              'min-w-0 truncate',
+                              done ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400',
+                            )}>
+                              {block.heading || '(No heading)'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Card>
+            )}
           </div>
         </div>
 
@@ -789,6 +772,12 @@ export default function GenerationPage() {
           }}
         />
       )}
+
+      <CostModal
+        isOpen={isCostOpen}
+        onClose={() => setIsCostOpen(false)}
+        generation={generation}
+      />
 
       <SeoEditModal
         isOpen={isSeoEditOpen}
