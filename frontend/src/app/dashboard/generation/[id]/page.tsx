@@ -99,6 +99,7 @@ export default function GenerationPage() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; blockId: number } | null>(null);
   const [editingBlock, setEditingBlock] = useState<ArticleBlock | null>(null);
   const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
+  const pendingScrollBlockIdRef = useRef<number | null>(null);
 
   /* refs */
   const logsEndRef       = useRef<HTMLDivElement>(null);
@@ -160,8 +161,28 @@ export default function GenerationPage() {
       onLog: (log) => setLogs(prev => [...prev, log]),
       onStatus: (status, progress) =>
         setGeneration(prev => prev ? { ...prev, status, progress } : null),
-      onBlocks: (newBlocks: ArticleBlock[]) =>
-        setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null),
+      onBlocks: (newBlocks: ArticleBlock[]) => {
+        setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null);
+        const scrollId = pendingScrollBlockIdRef.current;
+        if (scrollId !== null) {
+          pendingScrollBlockIdRef.current = null;
+          setTimeout(() => {
+            // Scroll article preview to edited block
+            const articleEl = document.getElementById(`article-block-${scrollId}`);
+            if (articleEl) {
+              articleEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              // Highlight animation
+              articleEl.classList.add('ring-2', 'ring-blue-400', 'rounded-lg');
+              setTimeout(() => articleEl.classList.remove('ring-2', 'ring-blue-400', 'rounded-lg'), 2000);
+            }
+            // Scroll structure panel to edited block
+            const structureEl = document.getElementById(`structure-block-${scrollId}`);
+            if (structureEl) {
+              structureEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+          }, 150);
+        }
+      },
       onCompleted: (article) => {
         setGeneration(prev =>
           prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
@@ -420,6 +441,7 @@ export default function GenerationPage() {
                       return (
                         <button
                           key={block.id}
+                          id={`structure-block-${block.id}`}
                           type="button"
                           onClick={() => done && scrollToBlock(block.id)}
                           disabled={!done}
@@ -757,11 +779,13 @@ export default function GenerationPage() {
         <BlockEditModal
           isOpen={true}
           onClose={() => setEditingBlock(null)}
-          generationId={generationId}
           block={editingBlock}
-          onSuccess={() => {
+          onSubmit={(blockId, prompt) => {
             setEditingBlock(null);
-            toast.success('Block updated');
+            pendingScrollBlockIdRef.current = blockId;
+            generationsApi.editBlock(generationId, blockId, prompt).then(res => {
+              if (!res.success) toast.error(res.error || 'Failed to edit block');
+            }).catch(() => toast.error('Failed to edit block'));
           }}
         />
       )}
@@ -769,13 +793,19 @@ export default function GenerationPage() {
       <SeoEditModal
         isOpen={isSeoEditOpen}
         onClose={() => setIsSeoEditOpen(false)}
-        generationId={generationId}
         currentTitle={generation?.seoTitle}
         currentDescription={generation?.seoDescription}
-        onSuccess={(title, description) => {
-          setGeneration(prev => prev ? { ...prev, seoTitle: title, seoDescription: description } : prev);
+        onSubmit={(prompt) => {
           setIsSeoEditOpen(false);
-          toast.success('SEO metadata updated');
+          generationsApi.editSeo(generationId, prompt).then(res => {
+            if (res.success) {
+              const data = res.data as { seoTitle: string; seoDescription: string };
+              setGeneration(prev => prev ? { ...prev, seoTitle: data.seoTitle, seoDescription: data.seoDescription } : prev);
+              toast.success('SEO metadata updated');
+            } else {
+              toast.error(res.error || 'Failed to edit SEO');
+            }
+          }).catch(() => toast.error('Failed to edit SEO metadata'));
         }}
       />
     </div>

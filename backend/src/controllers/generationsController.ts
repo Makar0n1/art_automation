@@ -465,7 +465,8 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
       throw new AppError('Can only edit blocks on completed generations', 400);
     }
 
-    const blocks = generation.articleBlocks as Array<{
+    // Convert Mongoose subdocs to plain objects (spread breaks nested arrays)
+    const blocks = (generation.toObject().articleBlocks || []) as Array<{
       id: number; type: string; heading: string; instruction: string;
       lsi: string[]; questions: string[]; answeredQuestions: unknown[];
       content?: string;
@@ -484,6 +485,7 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
     const model = generation.config.model || 'openai/gpt-4o';
 
     const room = `generation:${id}`;
+    const wordsBefore = targetBlock.content.split(/\s+/).filter(w => w.length > 0).length;
 
     // Emit start log
     const startLog = {
@@ -504,7 +506,10 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
       generation.config.comment
     );
 
-    // Update block content
+    const usage = openRouter.getTokenUsage();
+    const wordsAfter = editedContent.split(/\s+/).filter(w => w.length > 0).length;
+
+    // Update block content (already plain objects from toObject())
     const updatedBlocks = blocks.map(b =>
       b.id === blockId ? { ...b, content: editedContent } : b
     );
@@ -516,7 +521,7 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
     const completedLog = {
       timestamp: new Date(),
       level: 'info',
-      message: `✅ Block #${blockId} "${targetBlock.heading}" edited successfully`,
+      message: `✅ Block #${blockId} "${targetBlock.heading}" edited: ${wordsBefore}→${wordsAfter} words | ${usage.totalTokens.toLocaleString()} tokens (${usage.promptTokens.toLocaleString()}+${usage.completionTokens.toLocaleString()})`,
     };
 
     await Generation.findByIdAndUpdate(id, {
@@ -535,6 +540,7 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
     res.json({
       success: true,
       data: {
+        blockId,
         block: updatedBlocks.find(b => b.id === blockId),
         article: updatedArticle,
       },
@@ -597,10 +603,12 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
       generation.config.comment
     );
 
+    const usage = openRouter.getTokenUsage();
+
     const completedLog = {
       timestamp: new Date(),
       level: 'info',
-      message: `✅ SEO metadata updated: "${title}" (${title.length}/60)`,
+      message: `✅ SEO metadata updated: "${title}" (${title.length}/60) | ${usage.totalTokens.toLocaleString()} tokens (${usage.promptTokens.toLocaleString()}+${usage.completionTokens.toLocaleString()})`,
     };
 
     await Generation.findByIdAndUpdate(id, {
