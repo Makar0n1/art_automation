@@ -1282,6 +1282,7 @@ Return ONLY the updated paragraph:`;
       type: 'h1' | 'intro' | 'h2' | 'h3' | 'conclusion' | 'faq';
       heading: string;
       content?: string;
+      verifiedFacts?: Array<{ question: string; answer: string }>;
     }>,
     configuredLinks: Array<{ url: string; anchor?: string }>,
     minWords: number,
@@ -1415,7 +1416,8 @@ Return ONLY the updated paragraph:`;
 
       let styleCheckRules = '';
       if (comment) {
-        styleCheckRules = `\n7. STYLE COMPLIANCE - check if content follows: "${comment}"`;
+        styleCheckRules = `\n${articleType === 'informational' || articleType === 'commercial' ? '8' : '7'}. STYLE COMPLIANCE - check if content follows the author's instructions below`
+          + `\n${articleType === 'informational' || articleType === 'commercial' ? '9' : '8'}. VERIFIED DATA IS SACRED - The author's instructions AND the research facts below are REAL and verified. NEVER flag them as fabricated. NEVER remove prices, names, statistics, or specifics from these sources.`;
       }
 
       const systemPrompt = `You are a professional ${langName}-native editor. Review article quality.
@@ -1424,7 +1426,8 @@ Check ONLY for SERIOUS problems:
 1. UNNATURAL LANGUAGE - phrases that no native ${langName} speaker would ever write. Minor stylistic preferences do NOT count.
 2. CLEAR REPETITIONS - the SAME idea stated twice in DIFFERENT blocks (not just similar topics). Within a single block, minor rephrasing is fine.
 3. OBVIOUS FILLER - entire sentences that add zero information (e.g. "In this section we will discuss..."). Short transitional phrases are NOT filler.
-4. FABRICATED CLAIMS - invented numbers, statistics, or counts not backed by sources (e.g. "34 Kriterien" but only 20 listed)${typeCheckRules}${styleCheckRules}
+4. FABRICATED CLAIMS - invented numbers, statistics, or counts that the AI clearly made up (e.g. "34 Kriterien" but only 20 listed). EXCEPTION: Data from the AUTHOR'S INSTRUCTIONS or VERIFIED RESEARCH FACTS below is real and verified — do NOT flag it as fabricated.
+5. CONTENT DEPTH - flag blocks that are pure filler with zero concrete information. Each section should give the reader something specific: a fact, an insight, a practical recommendation, a comparison. Blocks that just restate the heading in different words or say generic truths everyone already knows are a PROBLEM. The reader must LEARN something or get a clear TAKEAWAY. This applies to ALL blocks INCLUDING blocks with links — links don't excuse empty content.${typeCheckRules}${styleCheckRules}
 
 IMPORTANT:
 - Lists and tables are GOOD — they show expertise. Do NOT flag them as problems.
@@ -1434,9 +1437,15 @@ IMPORTANT:
 - Return MAXIMUM 2 blocks — only the worst offenders. If nothing is truly bad, return [].
 Return valid JSON array.`;
 
+      // Build verified facts section from block data
+      const factsSection = blocks
+        .filter(b => b.verifiedFacts && b.verifiedFacts.length > 0)
+        .map(b => `[Block ${b.id}] ${b.verifiedFacts!.map(f => `Q: ${f.question} → A: ${f.answer}`).join('; ')}`)
+        .join('\n');
+
       const userPrompt = `Review this ${langName} article:
 
-ARTICLE TYPE: ${articleType.toUpperCase()}${comment ? `\nSTYLE: ${comment}` : ''}
+ARTICLE TYPE: ${articleType.toUpperCase()}${comment ? `\n\nAUTHOR'S INSTRUCTIONS (TRUSTED — verified by the author, not AI-generated):\n${comment}` : ''}${factsSection ? `\n\nVERIFIED RESEARCH FACTS (from real sources — not AI-generated):\n${factsSection}` : ''}
 
 === ARTICLE ===
 ${articleWithIds}
@@ -1497,7 +1506,9 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
     currentWordCount: number,
     targetMaxWords: number,
     language: string,
-    blockIdsWithLinks: Set<number> = new Set()
+    blockIdsWithLinks: Set<number> = new Set(),
+    comment?: string,
+    verifiedFacts?: Array<{ blockId: number; facts: string[] }>
   ): Promise<Array<{ blockId: number; targetWords: number; reason: string }>> {
     const languageNames: Record<string, string> = {
       'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
@@ -1530,6 +1541,7 @@ ABSOLUTELY FORBIDDEN to trim:
 
 PROTECT from heavy cutting:
 - Blocks with specific data, statistics, or expert information
+- Blocks containing data from the author's instructions or verified research (prices, names, specifics the author provided)
 
 Return a JSON array of blocks to trim:
 [{"blockId": <number>, "targetWords": <number>, "reason": "brief explanation"}]
@@ -1538,7 +1550,12 @@ The sum of words removed must be approximately ${wordsToRemove}. Only include bl
 NEVER include blocks that contain links.
 Return ONLY valid JSON.`;
 
-    const userPrompt = `Current article blocks:\n${blocksInfo}\n\nDecide which blocks to trim and by how much.`;
+    // Build facts info for trim context
+    const factsInfo = verifiedFacts && verifiedFacts.length > 0
+      ? verifiedFacts.map(f => `[Block ${f.blockId}] ${f.facts.join('; ')}`).join('\n')
+      : '';
+
+    const userPrompt = `Current article blocks:\n${blocksInfo}${comment ? `\n\nAUTHOR'S INSTRUCTIONS (verified data — protect this):\n${comment}` : ''}${factsInfo ? `\n\nVERIFIED RESEARCH FACTS:\n${factsInfo}` : ''}\n\nDecide which blocks to trim and by how much.`;
 
     try {
       const response = await this.chat(systemPrompt, userPrompt, 0.3);
@@ -1570,7 +1587,8 @@ Return ONLY valid JSON.`;
     language: string,
     articleType: string = 'informational',
     comment?: string,
-    maxWords?: number
+    maxWords?: number,
+    verifiedFacts?: Array<{ question: string; answer: string }>
   ): Promise<string> {
     const languageNames: Record<string, string> = {
       'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
@@ -1583,17 +1601,18 @@ Return ONLY valid JSON.`;
     let styleInstructions = '';
     if (comment) {
       styleInstructions = `
-5. Follow author's style instructions: ${comment}`;
+5. Follow author's style instructions: ${comment}
+6. PROTECTED DATA: The author's instructions AND research facts below are REAL and verified. You MUST preserve this information. NEVER remove data that matches the author's instructions or verified research facts.`;
     }
 
     // Build type instructions
     let typeInstructions = '';
     if (articleType === 'informational') {
       typeInstructions = `
-6. INFORMATIONAL ARTICLE: Remove ANY commercial content, pricing, selling language`;
+${comment ? '7' : '6'}. INFORMATIONAL ARTICLE: Remove unsolicited commercial/selling language. EXCEPTION: If the author's instructions or research facts include specific prices or commercial data, KEEP it — this information was explicitly provided.`;
     } else if (articleType === 'commercial') {
       typeInstructions = `
-6. COMMERCIAL ARTICLE: Keep pricing and commercial elements`;
+${comment ? '7' : '6'}. COMMERCIAL ARTICLE: Keep pricing and commercial elements`;
     }
 
     const wordLimitRule = maxWords
@@ -1623,11 +1642,12 @@ ${issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n')}
 
 === SUGGESTION ===
 ${suggestion}
-
+${verifiedFacts && verifiedFacts.length > 0 ? `\n=== VERIFIED FACTS FOR THIS BLOCK ===\n${verifiedFacts.map(f => `• ${f.question} → ${f.answer}`).join('\n')}\nThese facts are REAL research data. Preserve them in the text.\n` : ''}
 IMPORTANT:
 - Fix ONLY the issues listed above
 - KEEP ALL LINKS EXACTLY AS THEY ARE: [text](url)
 - Do NOT add new content or make the text longer
+- When fixing, ensure each paragraph delivers CONCRETE VALUE — a fact, insight, or recommendation. Replace generic filler with specific information.
 ${maxWords ? `- HARD LIMIT: ${maxWords} words maximum` : '- Keep similar length or shorter'}
 - Write in ${langName}
 

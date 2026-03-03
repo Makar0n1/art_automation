@@ -1169,6 +1169,10 @@ export const startQueueProcessor = () => {
               type: b.type as 'h1' | 'intro' | 'h2' | 'h3' | 'conclusion' | 'faq',
               heading: b.heading,
               content: b.content,
+              verifiedFacts: b.answeredQuestions?.map(aq => ({
+                question: aq.question,
+                answer: aq.answer,
+              })),
             })),
             configuredLinks,
             configMinWords,
@@ -1201,7 +1205,8 @@ export const startQueueProcessor = () => {
             block: { id: number; type: string; heading: string; content: string },
             issues: string[],
             suggestion: string,
-            maxWords?: number
+            maxWords?: number,
+            verifiedFacts?: Array<{ question: string; answer: string }>
           ): Promise<string> => {
             const urlRegex = /\[([^\]]*)\]\(([^)]+)\)/g;
             const originalUrls: string[] = [];
@@ -1217,7 +1222,8 @@ export const startQueueProcessor = () => {
               generation.config.language,
               generation.config.articleType || 'informational',
               generation.config.comment,
-              maxWords
+              maxWords,
+              verifiedFacts
             );
 
             let finalContent = fixedContent;
@@ -1288,7 +1294,8 @@ export const startQueueProcessor = () => {
                 { id: block.id, type: block.type, heading: block.heading, content: block.content },
                 issue.issues,
                 issue.suggestion,
-                ceiling
+                ceiling,
+                block.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
               );
             }
           }
@@ -1328,7 +1335,8 @@ export const startQueueProcessor = () => {
                 { id: block.id, type: block.type, heading: block.heading, content: block.content },
                 [issue.issue],
                 'Remove quotes around links. Make link anchors flow naturally in the sentence.',
-                currentWordCount // Don't grow
+                currentWordCount, // Don't grow
+                block.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
               );
             }
           }
@@ -1352,11 +1360,13 @@ export const startQueueProcessor = () => {
               if (blockIndex === -1) continue;
               const currentWordCount = block.content!.split(/\s+/).length;
               await addLog(generationId, 'thinking', `Reducing main keyword in Block #${block.id} (${block.keywordCount} occurrences)...`);
+              const rbIdx = reviewedBlocks[blockIndex];
               reviewedBlocks[blockIndex].content = await fixBlockWithUrlProtection(
                 { id: block.id, type: block.type, heading: block.heading, content: block.content! },
                 [`Main keyword "${generation.config.mainKeyword}" appears ${block.keywordCount} times — too many. Replace with synonyms/pronouns.`],
                 `Max 1 occurrence per block. Use synonyms. Never raw keywords or quotes.`,
-                currentWordCount
+                currentWordCount,
+                rbIdx.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
               );
             }
           }
@@ -1398,7 +1408,9 @@ export const startQueueProcessor = () => {
                   `Expand with details or examples.`,
                   generation.config.language,
                   generation.config.articleType || 'informational',
-                  generation.config.comment
+                  generation.config.comment,
+                  undefined, // no maxWords for expansion
+                  block.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
                 );
               }
             } else if (currentTotal > configMaxWords) {
@@ -1409,7 +1421,11 @@ export const startQueueProcessor = () => {
                 currentTotal,
                 configMaxWords,
                 generation.config.language,
-                blockIdsWithLinks
+                blockIdsWithLinks,
+                generation.config.comment,
+                reviewedBlocks
+                  .filter(b => b.answeredQuestions && b.answeredQuestions.length > 0)
+                  .map(b => ({ blockId: b.id, facts: b.answeredQuestions!.map(aq => `${aq.question}: ${aq.answer}`) }))
               );
 
               if (trimPlan.length > 0) {
@@ -1423,7 +1439,8 @@ export const startQueueProcessor = () => {
                     { id: block.id, type: block.type, heading: block.heading, content: block.content! },
                     [`Reduce to ${plan.targetWords} words. ${plan.reason}`],
                     `Be concise. Keep expert data and specific facts. Remove filler and redundancy.`,
-                    plan.targetWords
+                    plan.targetWords,
+                    block.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
                   );
                 }
               } else {
@@ -1442,7 +1459,8 @@ export const startQueueProcessor = () => {
                     { id: block.id, type: block.type, heading: block.heading, content: block.content },
                     [`Reduce from ${blockWords} to ~${targetBlockWords} words. Remove filler, keep facts.`],
                     `Be concise. Preserve all links and expert data.`,
-                    targetBlockWords
+                    targetBlockWords,
+                    block.answeredQuestions?.map(aq => ({ question: aq.question, answer: aq.answer }))
                   );
                 }
               }
