@@ -25,10 +25,10 @@ export const TypewriterMarkdown = memo(function TypewriterMarkdown({
     oldText: oldContent,
     enabled,
     mode: 'word',
-    speed: 12,
-    chunksPerFrame: 8,
-    eraseSpeed: 8,
-    eraseChunksPerFrame: 15,
+    speed: 18,
+    chunksPerFrame: 4,
+    eraseSpeed: 12,
+    eraseChunksPerFrame: 8,
     onComplete,
   });
 

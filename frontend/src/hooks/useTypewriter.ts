@@ -7,10 +7,10 @@ interface UseTypewriterOptions {
   oldText?: string;              // old text to erase first (backspace effect)
   enabled: boolean;
   mode?: 'word' | 'char';       // for TYPE phase only (erase is always char-based)
-  speed?: number;                // ms between type frames (default 12)
-  chunksPerFrame?: number;       // tokens per type frame (default 8)
-  eraseSpeed?: number;           // ms between erase frames (default 8)
-  eraseChunksPerFrame?: number;  // chars removed per erase frame (default 15)
+  speed?: number;                // ms between type frames (default 18)
+  chunksPerFrame?: number;       // tokens per type frame (default 4)
+  eraseSpeed?: number;           // ms between erase frames (default 12)
+  eraseChunksPerFrame?: number;  // chars removed per erase frame (default 8)
   onComplete?: () => void;
 }
 
@@ -28,10 +28,10 @@ export function useTypewriter({
   oldText,
   enabled,
   mode = 'word',
-  speed = 12,
-  chunksPerFrame = 8,
-  eraseSpeed = 8,
-  eraseChunksPerFrame = 15,
+  speed = 18,
+  chunksPerFrame = 4,
+  eraseSpeed = 12,
+  eraseChunksPerFrame = 8,
   onComplete,
 }: UseTypewriterOptions): UseTypewriterResult {
   const [displayText, setDisplayText] = useState(enabled ? '' : text);
@@ -109,7 +109,7 @@ export function useTypewriter({
     timeoutRef.current = setTimeout(() => {
       indexRef.current = 0;
       setPhase('typing');
-    }, 80);
+    }, 150);
 
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, [phase]);

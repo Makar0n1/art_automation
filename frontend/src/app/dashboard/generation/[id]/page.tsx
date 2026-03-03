@@ -77,34 +77,32 @@ const getBlockMarkdown = (block: ArticleBlock): string => {
   }
 };
 
-/** SEO field with backspace→type animation */
+/** Compact SEO field — inline label + value + copy, with backspace→type animation */
 const SeoField = ({ label, maxLen, value, oldValue, animating, onCopy, isCopied, onAnimationDone }: {
   label: string; maxLen: number; value: string; oldValue?: string; animating: boolean;
   onCopy: () => void; isCopied: boolean; onAnimationDone: () => void;
 }) => {
   const { displayText, isTyping } = useTypewriter({
     text: value, oldText: oldValue, enabled: animating, mode: 'char',
-    speed: 20, chunksPerFrame: 2, eraseSpeed: 10, eraseChunksPerFrame: 8,
+    speed: 25, chunksPerFrame: 1, eraseSpeed: 15, eraseChunksPerFrame: 4,
     onComplete: onAnimationDone,
   });
-  const isDark = label.includes('Description');
   return (
-    <div className="flex items-start gap-2">
-      <div className="flex-1 min-w-0">
-        <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-          {label}
-          <span className="ml-1 font-normal text-emerald-500">({value.length}/{maxLen})</span>
-        </span>
-        <p className={cn('mt-0.5 text-sm leading-snug', isDark ? 'text-gray-700 dark:text-gray-300' : 'text-gray-900 dark:text-white')}>
-          {animating ? displayText : value}
-          {isTyping && <span className="typewriter-cursor" />}
-        </p>
-      </div>
+    <div className="flex flex-1 min-w-0 items-center gap-1.5">
+      <span className="shrink-0 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
+        {label}
+        <span className="ml-0.5 font-normal text-emerald-500/70">({value.length}/{maxLen})</span>
+      </span>
+      <p className="min-w-0 truncate text-xs text-gray-800 dark:text-gray-200">
+        {animating ? displayText : value}
+        {isTyping && <span className="typewriter-cursor" />}
+      </p>
       <button
         onClick={onCopy}
-        className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+        className="shrink-0 rounded p-0.5 text-emerald-500 transition-colors hover:bg-emerald-100 dark:hover:bg-emerald-900/30"
+        title={`Copy ${label}`}
       >
-        {isCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy</>}
+        {isCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       </button>
     </div>
   );
@@ -147,6 +145,7 @@ export default function GenerationPage() {
   /* refs */
   const logsEndRef       = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
+  const articleScrollRef = useRef<HTMLDivElement>(null);
 
   /* ─── derived ─── */
 
@@ -215,12 +214,12 @@ export default function GenerationPage() {
             setEditingBlockIds(s => { const n = new Set(s); n.delete(nb.id); return n; });
             const oldContent = pb ? getBlockMarkdown(pb) : '';
             setAnimatingBlocks(m => { const n = new Map(m); n.set(nb.id, { oldContent }); return n; });
-            // Scroll to it
+            // Pin scroll to block heading (start) so heading stays visible during animation
             setTimeout(() => {
               const el = document.getElementById(`article-block-${nb.id}`);
-              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
               const se = document.getElementById(`structure-block-${nb.id}`);
-              if (se) se.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              if (se) se.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 150);
           } else if (!pb || !pb.content) {
             // New block during generation — snap previous, type-only (no erase)
@@ -242,11 +241,24 @@ export default function GenerationPage() {
         });
         setSeoAnimating(true);
       },
-      onCompleted: (article) => {
-        setGeneration(prev => {
-          if (prev) setSeoOldValues({ title: prev.seoTitle || '', description: prev.seoDescription || '' });
-          return prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null;
-        });
+      onCompleted: async (article) => {
+        // Re-fetch to get SEO metadata (not included in completed event)
+        try {
+          const response = await generationsApi.getOne(generationId);
+          if (response.success) {
+            const gen = response.data as Generation;
+            setSeoOldValues({ title: '', description: '' });
+            setGeneration(gen);
+          } else {
+            setGeneration(prev =>
+              prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
+            );
+          }
+        } catch {
+          setGeneration(prev =>
+            prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
+          );
+        }
         setSeoAnimating(true);
         toast.success('Article generation completed!');
       },
@@ -268,6 +280,17 @@ export default function GenerationPage() {
   useEffect(() => {
     if (isLogsAtBottom) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs, isLogsAtBottom]);
+
+  // Auto-scroll article preview during generation (not during edit/revert)
+  useEffect(() => {
+    if (!isInProgress || animatingBlocks.size === 0) return;
+    const el = articleScrollRef.current;
+    if (!el) return;
+    const interval = setInterval(() => {
+      el.scrollTop = el.scrollHeight;
+    }, 100);
+    return () => clearInterval(interval);
+  }, [isInProgress, animatingBlocks.size]);
 
   /* ─── handlers ─── */
 
@@ -468,73 +491,77 @@ export default function GenerationPage() {
             </div>
           )}
 
-          {/* SEO Metadata — full width on top */}
+          {/* SEO Metadata — compact single-row layout */}
           {hasMeta && (
-            <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
-              <div className="flex justify-end gap-1">
-                {isCompleted && (generation.seoTitleHistory?.length || generation.seoDescriptionHistory?.length) ? (
-                  <>
+            <div className="shrink-0 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+              <div className="flex items-center gap-3">
+                {/* SEO fields — inline */}
+                <div className="flex flex-1 min-w-0 items-center gap-4">
+                  {generation.seoTitle && (
+                    <SeoField
+                      label="Title" maxLen={60} value={generation.seoTitle}
+                      oldValue={seoOldValues.title}
+                      animating={seoAnimating} onCopy={copySeoTitle} isCopied={isTitleCopied}
+                      onAnimationDone={() => {}}
+                    />
+                  )}
+                  {generation.seoDescription && (
+                    <SeoField
+                      label="Desc" maxLen={160} value={generation.seoDescription}
+                      oldValue={seoOldValues.description}
+                      animating={seoAnimating} onCopy={copySeoDescription} isCopied={isDescCopied}
+                      onAnimationDone={() => setSeoAnimating(false)}
+                    />
+                  )}
+                </div>
+                {/* Action buttons */}
+                {isCompleted && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    {(generation.seoTitleHistory?.length || generation.seoDescriptionHistory?.length) ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            generationsApi.revertSeo(generationId, 'previous').then(res => {
+                              if (res.success) toast.success('SEO reverted to previous');
+                              else toast.error('Failed to revert');
+                            }).catch(() => toast.error('Failed to revert'));
+                          }}
+                          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/30"
+                          title="Revert to previous"
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            generationsApi.revertSeo(generationId, 'original').then(res => {
+                              if (res.success) toast.success('SEO reverted to original');
+                              else toast.error('Failed to revert');
+                            }).catch(() => toast.error('Failed to revert'));
+                          }}
+                          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-orange-600 transition-colors hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-900/30"
+                          title="Revert to original"
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                        </button>
+                      </>
+                    ) : null}
                     <button
-                      onClick={() => {
-                        generationsApi.revertSeo(generationId, 'previous').then(res => {
-                          if (res.success) toast.success('SEO reverted to previous');
-                          else toast.error('Failed to revert');
-                        }).catch(() => toast.error('Failed to revert'));
-                      }}
-                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/30"
+                      onClick={() => setIsCostOpen(true)}
+                      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+                      title="View cost"
                     >
-                      <RotateCcw className="h-3 w-3" />
-                      Previous
+                      <DollarSign className="h-2.5 w-2.5" />
                     </button>
                     <button
-                      onClick={() => {
-                        generationsApi.revertSeo(generationId, 'original').then(res => {
-                          if (res.success) toast.success('SEO reverted to original');
-                          else toast.error('Failed to revert');
-                        }).catch(() => toast.error('Failed to revert'));
-                      }}
-                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-orange-600 transition-colors hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-900/30"
+                      onClick={() => setIsSeoEditOpen(true)}
+                      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                      title="Edit with AI"
                     >
-                      <RotateCcw className="h-3 w-3" />
-                      Original
+                      <Sparkles className="h-2.5 w-2.5" />
                     </button>
-                  </>
-                ) : null}
-                {isCompleted && (
-                  <button
-                    onClick={() => setIsCostOpen(true)}
-                    className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                  >
-                    <DollarSign className="h-3 w-3" />
-                    Cost
-                  </button>
-                )}
-                {isCompleted && (
-                  <button
-                    onClick={() => setIsSeoEditOpen(true)}
-                    className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
-                  >
-                    <Sparkles className="h-3 w-3" />
-                    Edit with AI
-                  </button>
+                  </div>
                 )}
               </div>
-              {generation.seoTitle && (
-                <SeoField
-                  label="SEO Title" maxLen={60} value={generation.seoTitle}
-                  oldValue={seoOldValues.title}
-                  animating={seoAnimating} onCopy={copySeoTitle} isCopied={isTitleCopied}
-                  onAnimationDone={() => {}}
-                />
-              )}
-              {generation.seoDescription && (
-                <SeoField
-                  label="SEO Description" maxLen={160} value={generation.seoDescription}
-                  oldValue={seoOldValues.description}
-                  animating={seoAnimating} onCopy={copySeoDescription} isCopied={isDescCopied}
-                  onAnimationDone={() => setSeoAnimating(false)}
-                />
-              )}
             </div>
           )}
 
@@ -569,7 +596,7 @@ export default function GenerationPage() {
               </div>
 
               {/* Scrollable article content */}
-              <div className="flex-1 overflow-y-auto px-3 py-2">
+              <div ref={articleScrollRef} className="flex-1 overflow-y-auto px-3 py-2">
                 {blocksWithContent.length > 0 ? (
                   /* Block-by-block rendering — supports click-to-scroll from Structure */
                   <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-2 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">

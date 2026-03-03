@@ -88,21 +88,22 @@ body {
   animation-name: zoom-in-95;
 }
 
-/* Block editing overlay — subtle blue pulse */
+/* Block editing overlay — blur + darken + subtle pulse */
 .block-edit-overlay {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  backdrop-filter: blur(3px);
   border-radius: 0.5rem;
   z-index: 10;
   animation: overlay-pulse 2s ease-in-out infinite;
 }
 
 @keyframes overlay-pulse {
-  0%, 100% { background: rgba(59, 130, 246, 0.04); }
-  50% { background: rgba(59, 130, 246, 0.10); }
+  0%, 100% { background: rgba(0, 0, 0, 0.12); }
+  50% { background: rgba(0, 0, 0, 0.20); }
 }
 
 .dark .block-edit-overlay {
@@ -110,8 +111,8 @@ body {
 }
 
 @keyframes overlay-pulse-dark {
-  0%, 100% { background: rgba(59, 130, 246, 0.06); }
-  50% { background: rgba(59, 130, 246, 0.14); }
+  0%, 100% { background: rgba(0, 0, 0, 0.25); }
+  50% { background: rgba(0, 0, 0, 0.35); }
 }
 
 /* Typewriter cursor */
