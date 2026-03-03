@@ -44,6 +44,8 @@ import { BlockContextMenu } from '@/components/BlockContextMenu';
 import { BlockEditModal } from '@/components/BlockEditModal';
 import { SeoEditModal } from '@/components/SeoEditModal';
 import { CostModal } from '@/components/CostModal';
+import { TypewriterMarkdown } from '@/components/TypewriterMarkdown';
+import { useTypewriter } from '@/hooks/useTypewriter';
 import { generationsApi } from '@/lib/api';
 import { initSocket, subscribeToGeneration } from '@/lib/socket';
 import { ArticleBlock, Generation, GenerationLog, GenerationStatus } from '@/types';
@@ -75,6 +77,38 @@ const getBlockMarkdown = (block: ArticleBlock): string => {
   }
 };
 
+/** SEO field with typewriter animation */
+const SeoField = ({ label, maxLen, value, animating, onCopy, isCopied, onAnimationDone }: {
+  label: string; maxLen: number; value: string; animating: boolean;
+  onCopy: () => void; isCopied: boolean; onAnimationDone: () => void;
+}) => {
+  const { displayText, isTyping } = useTypewriter({
+    text: value, enabled: animating, mode: 'char', speed: 20, chunksPerFrame: 1,
+    onComplete: onAnimationDone,
+  });
+  const isDark = label.includes('Description');
+  return (
+    <div className="flex items-start gap-2">
+      <div className="flex-1 min-w-0">
+        <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+          {label}
+          <span className="ml-1 font-normal text-emerald-500">({value.length}/{maxLen})</span>
+        </span>
+        <p className={cn('mt-0.5 text-sm leading-snug', isDark ? 'text-gray-700 dark:text-gray-300' : 'text-gray-900 dark:text-white')}>
+          {animating ? displayText : value}
+          {isTyping && <span className="typewriter-cursor" />}
+        </p>
+      </div>
+      <button
+        onClick={onCopy}
+        className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
+      >
+        {isCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy</>}
+      </button>
+    </div>
+  );
+};
+
 /* ─── component ─── */
 
 export default function GenerationPage() {
@@ -102,7 +136,11 @@ export default function GenerationPage() {
   const [editingBlock, setEditingBlock] = useState<ArticleBlock | null>(null);
   const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
   const [isCostOpen, setIsCostOpen] = useState(false);
+  const [editingBlockIds, setEditingBlockIds] = useState<Set<number>>(new Set());
+  const [typingBlockIds, setTypingBlockIds] = useState<Set<number>>(new Set());
+  const [seoAnimating, setSeoAnimating] = useState(false);
   const pendingScrollBlockIdRef = useRef<number | null>(null);
+  const prevBlocksRef = useRef<ArticleBlock[]>([]);
 
   /* refs */
   const logsEndRef       = useRef<HTMLDivElement>(null);
@@ -161,31 +199,51 @@ export default function GenerationPage() {
       onStatus: (status, progress) =>
         setGeneration(prev => prev ? { ...prev, status, progress } : null),
       onBlocks: (newBlocks: ArticleBlock[]) => {
-        setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null);
+        const prev = prevBlocksRef.current;
         const scrollId = pendingScrollBlockIdRef.current;
-        if (scrollId !== null) {
-          pendingScrollBlockIdRef.current = null;
-          setTimeout(() => {
-            // Scroll article preview to edited block
-            const articleEl = document.getElementById(`article-block-${scrollId}`);
-            if (articleEl) {
-              articleEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-              // Highlight animation
-              articleEl.classList.add('ring-2', 'ring-blue-400', 'rounded-lg');
-              setTimeout(() => articleEl.classList.remove('ring-2', 'ring-blue-400', 'rounded-lg'), 2000);
-            }
-            // Scroll structure panel to edited block
-            const structureEl = document.getElementById(`structure-block-${scrollId}`);
-            if (structureEl) {
-              structureEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-          }, 150);
+
+        // Detect new content (generation pipeline) or changed content (edit/revert)
+        for (const nb of newBlocks) {
+          if (!nb.content) continue;
+          const pb = prev.find(b => b.id === nb.id);
+
+          if (scrollId === nb.id) {
+            // This block was edited/reverted — remove overlay, start typewriter
+            pendingScrollBlockIdRef.current = null;
+            setEditingBlockIds(s => { const n = new Set(s); n.delete(nb.id); return n; });
+            setTypingBlockIds(s => new Set(s).add(nb.id));
+            // Scroll to it
+            setTimeout(() => {
+              const el = document.getElementById(`article-block-${nb.id}`);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              const se = document.getElementById(`structure-block-${nb.id}`);
+              if (se) se.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 150);
+          } else if (!pb || !pb.content) {
+            // New block during generation — snap previous typing, start this one
+            setTypingBlockIds(s => {
+              const n = new Set<number>();
+              n.add(nb.id); // only this block types
+              return n;
+            });
+          } else if (pb.content !== nb.content) {
+            // Content changed (revert via Socket.IO without pendingScroll)
+            setTypingBlockIds(s => new Set(s).add(nb.id));
+          }
         }
+
+        prevBlocksRef.current = newBlocks;
+        setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null);
+      },
+      onSeo: (data) => {
+        setGeneration(prev => prev ? { ...prev, ...data } : null);
+        setSeoAnimating(true);
       },
       onCompleted: (article) => {
         setGeneration(prev =>
           prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
         );
+        setSeoAnimating(true);
         toast.success('Article generation completed!');
       },
       onError: (error) => {
@@ -410,6 +468,34 @@ export default function GenerationPage() {
           {hasMeta && (
             <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
               <div className="flex justify-end gap-1">
+                {isCompleted && (generation.seoTitleHistory?.length || generation.seoDescriptionHistory?.length) ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        generationsApi.revertSeo(generationId, 'previous').then(res => {
+                          if (res.success) toast.success('SEO reverted to previous');
+                          else toast.error('Failed to revert');
+                        }).catch(() => toast.error('Failed to revert'));
+                      }}
+                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/30"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => {
+                        generationsApi.revertSeo(generationId, 'original').then(res => {
+                          if (res.success) toast.success('SEO reverted to original');
+                          else toast.error('Failed to revert');
+                        }).catch(() => toast.error('Failed to revert'));
+                      }}
+                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-orange-600 transition-colors hover:bg-orange-50 dark:text-orange-400 dark:hover:bg-orange-900/30"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Original
+                    </button>
+                  </>
+                ) : null}
                 {isCompleted && (
                   <button
                     onClick={() => setIsCostOpen(true)}
@@ -430,38 +516,18 @@ export default function GenerationPage() {
                 )}
               </div>
               {generation.seoTitle && (
-                <div className="flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                      SEO Title
-                      <span className="ml-1 font-normal text-emerald-500">({generation.seoTitle.length}/60)</span>
-                    </span>
-                    <p className="mt-0.5 text-sm text-gray-900 dark:text-white leading-snug">{generation.seoTitle}</p>
-                  </div>
-                  <button
-                    onClick={copySeoTitle}
-                    className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                  >
-                    {isTitleCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Title</>}
-                  </button>
-                </div>
+                <SeoField
+                  label="SEO Title" maxLen={60} value={generation.seoTitle}
+                  animating={seoAnimating} onCopy={copySeoTitle} isCopied={isTitleCopied}
+                  onAnimationDone={() => {}}
+                />
               )}
               {generation.seoDescription && (
-                <div className="flex items-start gap-2">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
-                      SEO Description
-                      <span className="ml-1 font-normal text-emerald-500">({generation.seoDescription.length}/160)</span>
-                    </span>
-                    <p className="mt-0.5 text-sm text-gray-700 dark:text-gray-300 leading-snug">{generation.seoDescription}</p>
-                  </div>
-                  <button
-                    onClick={copySeoDescription}
-                    className="shrink-0 flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                  >
-                    {isDescCopied ? <><Check className="h-3 w-3" /> Copied</> : <><Copy className="h-3 w-3" /> Copy Desc</>}
-                  </button>
-                </div>
+                <SeoField
+                  label="SEO Description" maxLen={160} value={generation.seoDescription}
+                  animating={seoAnimating} onCopy={copySeoDescription} isCopied={isDescCopied}
+                  onAnimationDone={() => setSeoAnimating(false)}
+                />
               )}
             </div>
           )}
@@ -501,20 +567,38 @@ export default function GenerationPage() {
                 {blocksWithContent.length > 0 ? (
                   /* Block-by-block rendering — supports click-to-scroll from Structure */
                   <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-2 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">
-                    {blocksWithContent.map(block => (
-                      <section
-                        key={block.id}
-                        id={`article-block-${block.id}`}
-                        className="scroll-mt-2 transition-[box-shadow,border-radius] duration-500"
-                        onContextMenu={(e) => {
-                          if (!isCompleted) return;
-                          e.preventDefault();
-                          setContextMenu({ x: e.clientX, y: e.clientY, blockId: block.id });
-                        }}
-                      >
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{getBlockMarkdown(block)}</ReactMarkdown>
-                      </section>
-                    ))}
+                    {blocksWithContent.map(block => {
+                      const isBlockEditing = editingBlockIds.has(block.id);
+                      const isBlockTyping = typingBlockIds.has(block.id);
+
+                      return (
+                        <section
+                          key={block.id}
+                          id={`article-block-${block.id}`}
+                          className="relative scroll-mt-2 transition-[box-shadow,border-radius] duration-500"
+                          onContextMenu={(e) => {
+                            if (!isCompleted) return;
+                            e.preventDefault();
+                            setContextMenu({ x: e.clientX, y: e.clientY, blockId: block.id });
+                          }}
+                        >
+                          {isBlockEditing && (
+                            <div className="block-edit-overlay">
+                              <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+                            </div>
+                          )}
+                          {isBlockTyping ? (
+                            <TypewriterMarkdown
+                              content={getBlockMarkdown(block)}
+                              enabled={true}
+                              onComplete={() => setTypingBlockIds(s => { const n = new Set(s); n.delete(block.id); return n; })}
+                            />
+                          ) : (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{getBlockMarkdown(block)}</ReactMarkdown>
+                          )}
+                        </section>
+                      );
+                    })}
                   </div>
                 ) : (generation.generatedArticle || generation.article) ? (
                   /* Fallback: full assembled article */
@@ -542,7 +626,7 @@ export default function GenerationPage() {
 
             {/* Structure panel — fixed width sidebar */}
             {hasBlocks && (
-              <Card className="card-shine flex w-[220px] shrink-0 min-h-0 flex-col overflow-hidden !p-0">
+              <Card className="card-shine flex w-[300px] shrink-0 min-h-0 flex-col overflow-hidden !p-0">
                 <div className="shrink-0 flex items-center gap-2 border-b border-gray-100/60 px-3 py-2 dark:border-gray-700/30">
                   <List className="h-3.5 w-3.5 text-gray-400" />
                   <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -749,10 +833,19 @@ export default function GenerationPage() {
           x={contextMenu.x}
           y={contextMenu.y}
           blockId={contextMenu.blockId}
+          hasHistory={(blocks.find(b => b.id === contextMenu.blockId)?.contentHistory?.length ?? 0) > 0}
           onEditWithAI={(blockId) => {
             const block = blocks.find(b => b.id === blockId);
             if (block) setEditingBlock(block);
             setContextMenu(null);
+          }}
+          onRevert={(blockId, mode) => {
+            setContextMenu(null);
+            pendingScrollBlockIdRef.current = blockId;
+            generationsApi.revertBlock(generationId, blockId, mode).then(res => {
+              if (res.success) toast.success(`Block reverted to ${mode}`);
+              else toast.error(res.error || 'Failed to revert');
+            }).catch(() => toast.error('Failed to revert block'));
           }}
           onClose={() => setContextMenu(null)}
         />
@@ -766,9 +859,16 @@ export default function GenerationPage() {
           onSubmit={(blockId, prompt) => {
             setEditingBlock(null);
             pendingScrollBlockIdRef.current = blockId;
+            setEditingBlockIds(s => new Set(s).add(blockId));
             generationsApi.editBlock(generationId, blockId, prompt).then(res => {
-              if (!res.success) toast.error(res.error || 'Failed to edit block');
-            }).catch(() => toast.error('Failed to edit block'));
+              if (!res.success) {
+                setEditingBlockIds(s => { const n = new Set(s); n.delete(blockId); return n; });
+                toast.error(res.error || 'Failed to edit block');
+              }
+            }).catch(() => {
+              setEditingBlockIds(s => { const n = new Set(s); n.delete(blockId); return n; });
+              toast.error('Failed to edit block');
+            });
           }}
         />
       )}
@@ -787,13 +887,8 @@ export default function GenerationPage() {
         onSubmit={(prompt) => {
           setIsSeoEditOpen(false);
           generationsApi.editSeo(generationId, prompt).then(res => {
-            if (res.success) {
-              const data = res.data as { seoTitle: string; seoDescription: string };
-              setGeneration(prev => prev ? { ...prev, seoTitle: data.seoTitle, seoDescription: data.seoDescription } : prev);
-              toast.success('SEO metadata updated');
-            } else {
-              toast.error(res.error || 'Failed to edit SEO');
-            }
+            if (!res.success) toast.error(res.error || 'Failed to edit SEO');
+            // Socket.IO generation:seo event handles state update + animation
           }).catch(() => toast.error('Failed to edit SEO metadata'));
         }}
       />

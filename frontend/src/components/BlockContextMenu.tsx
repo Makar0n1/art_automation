@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, RotateCcw } from 'lucide-react';
 
 interface BlockContextMenuProps {
   x: number;
   y: number;
   blockId: number;
+  hasHistory: boolean;
   onEditWithAI: (blockId: number) => void;
+  onRevert: (blockId: number, mode: 'previous' | 'original') => void;
   onClose: () => void;
 }
 
@@ -15,7 +17,9 @@ export const BlockContextMenu: React.FC<BlockContextMenuProps> = ({
   x,
   y,
   blockId,
+  hasHistory,
   onEditWithAI,
+  onRevert,
   onClose,
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -58,6 +62,25 @@ export const BlockContextMenu: React.FC<BlockContextMenuProps> = ({
         <Sparkles className="h-4 w-4 text-blue-500" />
         Edit with AI
       </button>
+      {hasHistory && (
+        <>
+          <div className="mx-2 my-1 border-t border-gray-100 dark:border-gray-700" />
+          <button
+            onClick={() => onRevert(blockId, 'previous')}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-amber-50 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            <RotateCcw className="h-4 w-4 text-amber-500" />
+            Revert to Previous
+          </button>
+          <button
+            onClick={() => onRevert(blockId, 'original')}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 transition-colors hover:bg-orange-50 dark:text-gray-200 dark:hover:bg-gray-700"
+          >
+            <RotateCcw className="h-4 w-4 text-orange-500" />
+            Revert to Original
+          </button>
+        </>
+      )}
     </div>
   );
 };

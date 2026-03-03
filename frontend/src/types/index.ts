@@ -153,6 +153,7 @@ export interface ArticleBlock {
   questions?: string[];
   answeredQuestions?: AnsweredQuestion[];
   content?: string;
+  contentHistory?: string[];
 }
 
 export interface StructureAnalysis {
@@ -182,6 +183,8 @@ export interface Generation {
   article?: string; // Full article in markdown format
   seoTitle?: string; // SEO optimized title (max 60 chars)
   seoDescription?: string; // SEO meta description (max 160 chars)
+  seoTitleHistory?: string[];
+  seoDescriptionHistory?: string[];
   // Cost analytics
   tokenUsage?: {
     promptTokens: number;

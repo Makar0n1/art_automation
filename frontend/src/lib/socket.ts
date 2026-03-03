@@ -76,6 +76,7 @@ export const subscribeToGeneration = (
     onLog?: (log: GenerationLog) => void;
     onStatus?: (status: GenerationStatus, progress: number) => void;
     onBlocks?: (blocks: ArticleBlock[]) => void;
+    onSeo?: (data: { seoTitle: string; seoDescription: string; seoTitleHistory?: string[]; seoDescriptionHistory?: string[] }) => void;
     onCompleted?: (article: string) => void;
     onError?: (error: string) => void;
   }
@@ -107,6 +108,12 @@ export const subscribeToGeneration = (
     }
   };
 
+  const handleSeo = (data: { generationId: string; seoTitle: string; seoDescription: string; seoTitleHistory?: string[]; seoDescriptionHistory?: string[] }) => {
+    if (data.generationId === generationId && callbacks.onSeo) {
+      callbacks.onSeo(data);
+    }
+  };
+
   const handleCompleted = (data: { generationId: string; article: string }) => {
     if (data.generationId === generationId && callbacks.onCompleted) {
       callbacks.onCompleted(data.article);
@@ -122,6 +129,7 @@ export const subscribeToGeneration = (
   socket.on('generation:log', handleLog);
   socket.on('generation:status', handleStatus);
   socket.on('generation:blocks', handleBlocks);
+  socket.on('generation:seo', handleSeo);
   socket.on('generation:completed', handleCompleted);
   socket.on('generation:error', handleError);
 
@@ -132,6 +140,7 @@ export const subscribeToGeneration = (
       socket.off('generation:log', handleLog);
       socket.off('generation:status', handleStatus);
       socket.off('generation:blocks', handleBlocks);
+      socket.off('generation:seo', handleSeo);
       socket.off('generation:completed', handleCompleted);
       socket.off('generation:error', handleError);
     }

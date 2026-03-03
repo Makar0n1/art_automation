@@ -403,6 +403,8 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
       article: null,
       seoTitle: null,
       seoDescription: null,
+      seoTitleHistory: [],
+      seoDescriptionHistory: [],
       tokenUsage: null,
       modelPricing: null,
       firecrawlCredits: null,
@@ -512,9 +514,20 @@ export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResp
     const usage = openRouter.getTokenUsage();
     const wordsAfter = editedContent.split(/\s+/).filter(w => w.length > 0).length;
 
+    // Version history: push current content before replacing
+    const currentHistory = (targetBlock as Record<string, unknown>).contentHistory as string[] || [];
+    let newHistory: string[];
+    if (currentHistory.length === 0) {
+      newHistory = [targetBlock.content!];                    // first edit → save original
+    } else if (currentHistory.length < 2) {
+      newHistory = [...currentHistory, targetBlock.content!]; // second edit → [original, prev]
+    } else {
+      newHistory = [currentHistory[0], targetBlock.content!]; // 3rd+ → keep original, replace prev
+    }
+
     // Update block content (already plain objects from toObject())
     const updatedBlocks = blocks.map(b =>
-      b.id === blockId ? { ...b, content: editedContent } : b
+      b.id === blockId ? { ...b, content: editedContent, contentHistory: newHistory } : b
     );
 
     // Reassemble article
@@ -613,6 +626,21 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
 
     const usage = openRouter.getTokenUsage();
 
+    // SEO version history
+    const genObj = generation.toObject();
+    const oldTitle = generation.seoTitle || '';
+    const oldDesc = generation.seoDescription || '';
+
+    const titleHist = (genObj.seoTitleHistory || []) as string[];
+    const newTitleHist = titleHist.length === 0 ? [oldTitle]
+      : titleHist.length < 2 ? [...titleHist, oldTitle]
+      : [titleHist[0], oldTitle];
+
+    const descHist = (genObj.seoDescriptionHistory || []) as string[];
+    const newDescHist = descHist.length === 0 ? [oldDesc]
+      : descHist.length < 2 ? [...descHist, oldDesc]
+      : [descHist[0], oldDesc];
+
     const completedLog = {
       timestamp: new Date(),
       level: 'info',
@@ -620,7 +648,12 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
     };
 
     await Generation.findByIdAndUpdate(id, {
-      $set: { seoTitle: title, seoDescription: description },
+      $set: {
+        seoTitle: title,
+        seoDescription: description,
+        seoTitleHistory: newTitleHist,
+        seoDescriptionHistory: newDescHist,
+      },
       $inc: {
         'tokenUsage.promptTokens': usage.promptTokens,
         'tokenUsage.completionTokens': usage.completionTokens,
@@ -630,6 +663,10 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
     });
 
     await publishSocketEvent(room, 'generation:log', { generationId: id, log: completedLog });
+    await publishSocketEvent(room, 'generation:seo', {
+      generationId: id, seoTitle: title, seoDescription: description,
+      seoTitleHistory: newTitleHist, seoDescriptionHistory: newDescHist,
+    });
 
     res.json({
       success: true,
@@ -641,6 +678,157 @@ export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiRespon
     } else {
       logger.error('Edit SEO error', { error });
       res.status(500).json({ success: false, error: 'Failed to edit SEO metadata' });
+    }
+  }
+};
+
+/**
+ * Revert a block to a previous version
+ * POST /api/generations/:id/revert-block
+ */
+export const revertBlock = async (req: AuthenticatedRequest, res: Response<ApiResponse>) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    const { blockId, mode } = req.body;
+
+    if (!userId) throw new AppError('User not found', 404);
+    if (blockId === undefined || !mode) throw new AppError('blockId and mode required', 400);
+    if (!['previous', 'original'].includes(mode)) throw new AppError('mode must be previous or original', 400);
+
+    const generation = await Generation.findOne({ _id: id, userId });
+    if (!generation) throw new AppError('Generation not found', 404);
+    if (generation.status !== GenerationStatus.COMPLETED) {
+      throw new AppError('Can only revert blocks on completed generations', 400);
+    }
+
+    const blocks = (generation.toObject().articleBlocks || []) as Array<{
+      id: number; type: string; heading: string; instruction: string;
+      lsi: string[]; questions: string[]; answeredQuestions: unknown[];
+      content?: string; contentHistory?: string[];
+    }>;
+    const targetBlock = blocks.find(b => b.id === blockId);
+    if (!targetBlock) throw new AppError(`Block ${blockId} not found`, 404);
+
+    const history = targetBlock.contentHistory || [];
+    if (history.length === 0) throw new AppError('No version history for this block', 400);
+
+    let revertedContent: string;
+    let newHistory: string[];
+
+    if (mode === 'original') {
+      revertedContent = history[0];
+      newHistory = [];
+    } else {
+      revertedContent = history[history.length - 1];
+      newHistory = history.slice(0, -1);
+    }
+
+    const updatedBlocks = blocks.map(b =>
+      b.id === blockId ? { ...b, content: revertedContent, contentHistory: newHistory } : b
+    );
+    const updatedArticle = assembleArticleFromBlocks(updatedBlocks);
+
+    const log = {
+      timestamp: new Date(),
+      level: 'info' as const,
+      message: `↩️ Block #${blockId} "${targetBlock.heading}" reverted to ${mode} version`,
+    };
+
+    await Generation.findByIdAndUpdate(id, {
+      $set: { articleBlocks: updatedBlocks, article: updatedArticle, generatedArticle: updatedArticle },
+      $push: { logs: log },
+    });
+
+    const room = `generation:${id}`;
+    await publishSocketEvent(room, 'generation:blocks', { generationId: id, blocks: updatedBlocks });
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log });
+
+    res.json({ success: true, data: { blockId, block: updatedBlocks.find(b => b.id === blockId), article: updatedArticle } });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Revert block error', { error });
+      res.status(500).json({ success: false, error: 'Failed to revert block' });
+    }
+  }
+};
+
+/**
+ * Revert SEO metadata to a previous version
+ * POST /api/generations/:id/revert-seo
+ */
+export const revertSeo = async (req: AuthenticatedRequest, res: Response<ApiResponse>) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    const { mode } = req.body;
+
+    if (!userId) throw new AppError('User not found', 404);
+    if (!mode) throw new AppError('mode required', 400);
+    if (!['previous', 'original'].includes(mode)) throw new AppError('mode must be previous or original', 400);
+
+    const generation = await Generation.findOne({ _id: id, userId });
+    if (!generation) throw new AppError('Generation not found', 404);
+    if (generation.status !== GenerationStatus.COMPLETED) {
+      throw new AppError('Can only revert SEO on completed generations', 400);
+    }
+
+    const genObj = generation.toObject();
+    const updates: Record<string, unknown> = {};
+
+    const titleHist = (genObj.seoTitleHistory || []) as string[];
+    if (titleHist.length > 0) {
+      if (mode === 'original') {
+        updates.seoTitle = titleHist[0];
+        updates.seoTitleHistory = [];
+      } else {
+        updates.seoTitle = titleHist[titleHist.length - 1];
+        updates.seoTitleHistory = titleHist.slice(0, -1);
+      }
+    }
+
+    const descHist = (genObj.seoDescriptionHistory || []) as string[];
+    if (descHist.length > 0) {
+      if (mode === 'original') {
+        updates.seoDescription = descHist[0];
+        updates.seoDescriptionHistory = [];
+      } else {
+        updates.seoDescription = descHist[descHist.length - 1];
+        updates.seoDescriptionHistory = descHist.slice(0, -1);
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new AppError('No SEO version history available', 400);
+    }
+
+    const log = {
+      timestamp: new Date(),
+      level: 'info' as const,
+      message: `↩️ SEO metadata reverted to ${mode} version`,
+    };
+
+    await Generation.findByIdAndUpdate(id, { $set: updates, $push: { logs: log } });
+
+    const room = `generation:${id}`;
+    await publishSocketEvent(room, 'generation:seo', {
+      generationId: id,
+      seoTitle: (updates.seoTitle as string) ?? generation.seoTitle,
+      seoDescription: (updates.seoDescription as string) ?? generation.seoDescription,
+      seoTitleHistory: (updates.seoTitleHistory as string[]) ?? genObj.seoTitleHistory,
+      seoDescriptionHistory: (updates.seoDescriptionHistory as string[]) ?? genObj.seoDescriptionHistory,
+    });
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log });
+
+    res.json({ success: true, data: updates });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Revert SEO error', { error });
+      res.status(500).json({ success: false, error: 'Failed to revert SEO metadata' });
     }
   }
 };

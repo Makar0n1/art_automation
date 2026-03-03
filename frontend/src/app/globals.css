@@ -88,6 +88,49 @@ body {
   animation-name: zoom-in-95;
 }
 
+/* Block editing overlay */
+.block-edit-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(2px);
+  border-radius: 0.5rem;
+  z-index: 10;
+  animation: overlay-fade-in 200ms ease-out;
+}
+
+.dark .block-edit-overlay {
+  background: rgba(15, 23, 42, 0.7);
+}
+
+@keyframes overlay-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Typewriter cursor */
+.typewriter-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background-color: #3b82f6;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: cursor-blink 0.8s step-end infinite;
+}
+
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.dark .typewriter-cursor {
+  background-color: #60a5fa;
+}
+
 /* Prose styles for article content */
 .prose {
   max-width: 65ch;

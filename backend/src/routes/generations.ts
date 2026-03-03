@@ -13,6 +13,8 @@ import {
   restartGenerationHandler,
   editBlock,
   editSeo,
+  revertBlock,
+  revertSeo,
 } from '../controllers/generationsController.js';
 import { authenticate } from '../middleware/auth.js';
 
@@ -62,6 +64,18 @@ router.post('/:id/edit-block', editBlock);
  * Edit SEO metadata with AI
  */
 router.post('/:id/edit-seo', editSeo);
+
+/**
+ * POST /api/generations/:id/revert-block
+ * Revert a block to previous or original version
+ */
+router.post('/:id/revert-block', revertBlock);
+
+/**
+ * POST /api/generations/:id/revert-seo
+ * Revert SEO metadata to previous or original version
+ */
+router.post('/:id/revert-seo', revertSeo);
 
 /**
  * DELETE /api/generations/:id

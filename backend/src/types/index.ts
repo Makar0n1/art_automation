@@ -166,6 +166,7 @@ export interface ArticleBlock {
   questions?: string[];
   answeredQuestions?: AnsweredQuestion[]; // Questions with answers from Supabase
   content?: string; // Generated content for this block
+  contentHistory?: string[]; // Version history: max 2 entries [original, previous]
 }
 
 /**
@@ -215,6 +216,8 @@ export interface IGeneration extends Document {
   article?: string; // Full article in markdown format
   seoTitle?: string; // SEO optimized title (max 60 chars)
   seoDescription?: string; // SEO meta description (max 160 chars)
+  seoTitleHistory?: string[];
+  seoDescriptionHistory?: string[];
   // Cost analytics
   tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   modelPricing?: { prompt: string; completion: string };

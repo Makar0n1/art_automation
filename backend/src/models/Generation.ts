@@ -130,6 +130,7 @@ const ArticleBlockSchema = new Schema({
   questions: [{ type: String }],
   answeredQuestions: [AnsweredQuestionSchema], // Questions with answers from Supabase
   content: { type: String }, // Generated content for this block
+  contentHistory: [{ type: String }], // Version history: max 2 entries [original, previous]
 }, { _id: false });
 
 /**
@@ -207,6 +208,8 @@ const GenerationSchema = new Schema<IGeneration>(
     article: { type: String }, // Full article in markdown format
     seoTitle: { type: String }, // SEO optimized title (max 60 chars)
     seoDescription: { type: String }, // SEO meta description (max 160 chars)
+    seoTitleHistory: [{ type: String }],
+    seoDescriptionHistory: [{ type: String }],
     // Cost analytics
     tokenUsage: {
       type: new Schema({

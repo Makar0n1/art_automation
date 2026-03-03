@@ -262,4 +262,14 @@ export const generationsApi = {
     );
     return response.data;
   },
+
+  revertBlock: async (id: string, blockId: number, mode: 'previous' | 'original') => {
+    const response = await api.post<ApiResponse>(`/generations/${id}/revert-block`, { blockId, mode });
+    return response.data;
+  },
+
+  revertSeo: async (id: string, mode: 'previous' | 'original') => {
+    const response = await api.post<ApiResponse>(`/generations/${id}/revert-seo`, { field: 'both', mode });
+    return response.data;
+  },
 };
