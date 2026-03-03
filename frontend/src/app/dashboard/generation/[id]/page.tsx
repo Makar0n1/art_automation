@@ -178,6 +178,8 @@ export default function GenerationPage() {
           setGeneration(gen);
           setLogs(gen.logs || []);
           if (gen.config.model) setSelectedModel(gen.config.model);
+          // Initialize prevBlocksRef so edit/revert animations have old content to erase
+          prevBlocksRef.current = gen.articleBlocks?.filter(b => b && b.type) || [];
         }
       } catch {
         toast.error('Failed to load generation');
@@ -411,6 +413,11 @@ export default function GenerationPage() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {isCompleted && (
+            <Button variant="ghost" size="sm" onClick={() => setIsCostOpen(true)} className="text-gray-400" title="View cost">
+              <DollarSign className="h-4 w-4" />
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={() => setIsConfigExpanded(p => !p)} className="text-gray-400">
             <Settings className="h-4 w-4" />
           </Button>
@@ -496,7 +503,7 @@ export default function GenerationPage() {
             <div className="shrink-0 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2 dark:border-emerald-800/40 dark:bg-emerald-900/10">
               <div className="flex items-center gap-3">
                 {/* SEO fields — inline */}
-                <div className="flex flex-1 min-w-0 items-center gap-4">
+                <div className="flex flex-1 min-w-0 items-center gap-1">
                   {generation.seoTitle && (
                     <SeoField
                       label="Title" maxLen={60} value={generation.seoTitle}
@@ -545,13 +552,6 @@ export default function GenerationPage() {
                         </button>
                       </>
                     ) : null}
-                    <button
-                      onClick={() => setIsCostOpen(true)}
-                      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 transition-colors hover:bg-emerald-100 dark:text-emerald-400 dark:hover:bg-emerald-900/30"
-                      title="View cost"
-                    >
-                      <DollarSign className="h-2.5 w-2.5" />
-                    </button>
                     <button
                       onClick={() => setIsSeoEditOpen(true)}
                       className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
