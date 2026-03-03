@@ -167,22 +167,8 @@ const calcProgress = (stepNumber: number, stepProgress: number = 0): number => {
  * Fixes issue where AI sometimes includes heading despite instructions not to
  * Handles both markdown headings (## Title) and plain text headings (Title\n\n)
  */
-const stripLeadingHeading = (content: string, blockHeading?: string): string => {
-  // Remove any leading markdown heading (# ## ### etc.) from the start
-  let cleaned = content.replace(/^#{1,6}\s+[^\n]+\n+/, '').trim();
-
-  // Also remove plain text heading that matches the block heading (AI duplicate bug)
-  if (blockHeading && blockHeading.trim()) {
-    const headingText = blockHeading.trim();
-    // Check if content starts with the heading text (exact match on first line)
-    const firstLine = cleaned.split('\n')[0].trim();
-    if (firstLine === headingText) {
-      cleaned = cleaned.substring(cleaned.indexOf('\n') + 1).trim();
-    }
-  }
-
-  return cleaned;
-};
+// Shared utility — also used by edit controllers
+import { stripLeadingHeading } from '../utils/articleAssembly.js';
 
 /**
  * Add log to generation and emit to client

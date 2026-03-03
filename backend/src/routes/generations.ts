@@ -11,6 +11,8 @@ import {
   getQueueStatistics,
   getAllGenerations,
   restartGenerationHandler,
+  editBlock,
+  editSeo,
 } from '../controllers/generationsController.js';
 import { authenticate } from '../middleware/auth.js';
 
@@ -48,6 +50,18 @@ router.get('/:id/logs', getGenerationLogs);
  * Restart generation from scratch (clears all intermediate data)
  */
 router.post('/:id/restart', restartGenerationHandler);
+
+/**
+ * POST /api/generations/:id/edit-block
+ * Edit a single block with AI
+ */
+router.post('/:id/edit-block', editBlock);
+
+/**
+ * POST /api/generations/:id/edit-seo
+ * Edit SEO metadata with AI
+ */
+router.post('/:id/edit-seo', editSeo);
 
 /**
  * DELETE /api/generations/:id

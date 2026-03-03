@@ -10,6 +10,10 @@ import { AuthenticatedRequest, ApiResponse, GenerationStatus } from '../types/in
 import { AppError } from '../middleware/errorHandler.js';
 import { queueGeneration, getQueueStats } from '../queues/generationQueue.js';
 import { logger } from '../utils/logger.js';
+import { publishSocketEvent } from '../utils/redis.js';
+import { assembleArticleFromBlocks } from '../utils/articleAssembly.js';
+import { OpenRouterService } from '../services/OpenRouterService.js';
+import { decrypt } from '../services/CryptoService.js';
 
 /**
  * Create new generation
@@ -325,7 +329,7 @@ export const getAllGenerations = async (
     const generations = await Generation.find(query)
       .select('-logs -serpResults')
       .populate('projectId', 'name')
-      .sort({ createdAt: -1 })
+      .sort({ updatedAt: -1 })
       .skip(Number(offset))
       .limit(Number(limit))
       .lean();
@@ -435,6 +439,187 @@ export const restartGenerationHandler = async (req: AuthenticatedRequest, res: R
     } else {
       logger.error('Restart generation error', { error });
       res.status(500).json({ success: false, error: 'Failed to restart generation' });
+    }
+  }
+};
+
+/**
+ * Edit a single block with AI based on user's prompt
+ * POST /api/generations/:id/edit-block
+ */
+export const editBlock = async (req: AuthenticatedRequest, res: Response<ApiResponse>) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    const { blockId, prompt } = req.body;
+
+    if (!userId) throw new AppError('User not found', 404);
+    if (blockId === undefined || !prompt) {
+      throw new AppError('blockId and prompt are required', 400);
+    }
+
+    // Find generation (must be completed)
+    const generation = await Generation.findOne({ _id: id, userId });
+    if (!generation) throw new AppError('Generation not found', 404);
+    if (generation.status !== GenerationStatus.COMPLETED) {
+      throw new AppError('Can only edit blocks on completed generations', 400);
+    }
+
+    const blocks = generation.articleBlocks as Array<{
+      id: number; type: string; heading: string; instruction: string;
+      lsi: string[]; questions: string[]; answeredQuestions: unknown[];
+      content?: string;
+    }>;
+    const targetBlock = blocks.find(b => b.id === blockId);
+    if (!targetBlock || !targetBlock.content) {
+      throw new AppError(`Block ${blockId} not found or has no content`, 404);
+    }
+
+    // Get user's OpenRouter key
+    const user = await User.findById(userId);
+    if (!user?.apiKeys?.openRouter?.apiKey) {
+      throw new AppError('OpenRouter API key not configured', 400);
+    }
+    const openRouterKey = decrypt(user.apiKeys.openRouter.apiKey);
+    const model = generation.config.model || 'openai/gpt-4o';
+
+    const room = `generation:${id}`;
+
+    // Emit start log
+    const startLog = {
+      timestamp: new Date(),
+      level: 'info',
+      message: `✏️ Editing block #${blockId} "${targetBlock.heading}" with AI...`,
+    };
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log: startLog });
+
+    // Call AI
+    const openRouter = new OpenRouterService(openRouterKey, model);
+    const editedContent = await openRouter.editBlockContent(
+      { id: targetBlock.id, type: targetBlock.type, heading: targetBlock.heading, content: targetBlock.content },
+      blocks.map(b => ({ id: b.id, type: b.type, heading: b.heading, content: b.content })),
+      prompt,
+      generation.config.language,
+      generation.config.articleType || 'informational',
+      generation.config.comment
+    );
+
+    // Update block content
+    const updatedBlocks = blocks.map(b =>
+      b.id === blockId ? { ...b, content: editedContent } : b
+    );
+
+    // Reassemble article
+    const updatedArticle = assembleArticleFromBlocks(updatedBlocks);
+
+    // Save to DB
+    const completedLog = {
+      timestamp: new Date(),
+      level: 'info',
+      message: `✅ Block #${blockId} "${targetBlock.heading}" edited successfully`,
+    };
+
+    await Generation.findByIdAndUpdate(id, {
+      $set: {
+        articleBlocks: updatedBlocks,
+        article: updatedArticle,
+        generatedArticle: updatedArticle,
+      },
+      $push: { logs: { $each: [startLog, completedLog] } },
+    });
+
+    // Emit updates via Socket.IO
+    await publishSocketEvent(room, 'generation:blocks', { generationId: id, blocks: updatedBlocks });
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log: completedLog });
+
+    res.json({
+      success: true,
+      data: {
+        block: updatedBlocks.find(b => b.id === blockId),
+        article: updatedArticle,
+      },
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Edit block error', { error });
+      res.status(500).json({ success: false, error: 'Failed to edit block' });
+    }
+  }
+};
+
+/**
+ * Edit SEO metadata with AI based on user's prompt
+ * POST /api/generations/:id/edit-seo
+ */
+export const editSeo = async (req: AuthenticatedRequest, res: Response<ApiResponse>) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    const { prompt } = req.body;
+
+    if (!userId) throw new AppError('User not found', 404);
+    if (!prompt) throw new AppError('prompt is required', 400);
+
+    const generation = await Generation.findOne({ _id: id, userId });
+    if (!generation) throw new AppError('Generation not found', 404);
+    if (generation.status !== GenerationStatus.COMPLETED) {
+      throw new AppError('Can only edit SEO on completed generations', 400);
+    }
+
+    const user = await User.findById(userId);
+    if (!user?.apiKeys?.openRouter?.apiKey) {
+      throw new AppError('OpenRouter API key not configured', 400);
+    }
+    const openRouterKey = decrypt(user.apiKeys.openRouter.apiKey);
+    const model = generation.config.model || 'openai/gpt-4o';
+
+    const room = `generation:${id}`;
+
+    const startLog = {
+      timestamp: new Date(),
+      level: 'info',
+      message: '✏️ Regenerating SEO metadata with AI...',
+    };
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log: startLog });
+
+    const openRouter = new OpenRouterService(openRouterKey, model);
+    const article = generation.article || generation.generatedArticle || '';
+    const { title, description } = await openRouter.editSeoMetadata(
+      article,
+      generation.seoTitle || '',
+      generation.seoDescription || '',
+      generation.config.mainKeyword,
+      prompt,
+      generation.config.language,
+      generation.config.articleType || 'informational',
+      generation.config.comment
+    );
+
+    const completedLog = {
+      timestamp: new Date(),
+      level: 'info',
+      message: `✅ SEO metadata updated: "${title}" (${title.length}/60)`,
+    };
+
+    await Generation.findByIdAndUpdate(id, {
+      $set: { seoTitle: title, seoDescription: description },
+      $push: { logs: { $each: [startLog, completedLog] } },
+    });
+
+    await publishSocketEvent(room, 'generation:log', { generationId: id, log: completedLog });
+
+    res.json({
+      success: true,
+      data: { seoTitle: title, seoDescription: description },
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Edit SEO error', { error });
+      res.status(500).json({ success: false, error: 'Failed to edit SEO metadata' });
     }
   }
 };

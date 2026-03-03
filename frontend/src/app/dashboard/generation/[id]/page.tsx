@@ -25,6 +25,7 @@ import {
   Terminal,
   Settings,
   Maximize2,
+  Sparkles,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -38,6 +39,9 @@ import {
   Modal,
 } from '@/components/ui';
 import { ModelSelector } from '@/components/ModelSelector';
+import { BlockContextMenu } from '@/components/BlockContextMenu';
+import { BlockEditModal } from '@/components/BlockEditModal';
+import { SeoEditModal } from '@/components/SeoEditModal';
 import { generationsApi } from '@/lib/api';
 import { initSocket, subscribeToGeneration } from '@/lib/socket';
 import { ArticleBlock, Generation, GenerationLog, GenerationStatus } from '@/types';
@@ -91,6 +95,10 @@ export default function GenerationPage() {
   const [isConfigExpanded, setIsConfigExpanded] = useState(false);
   const [selectedModel, setSelectedModel]       = useState('');
   const [isLogsAtBottom, setIsLogsAtBottom]     = useState(true);
+
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; blockId: number } | null>(null);
+  const [editingBlock, setEditingBlock] = useState<ArticleBlock | null>(null);
+  const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
 
   /* refs */
   const logsEndRef       = useRef<HTMLDivElement>(null);
@@ -461,6 +469,17 @@ export default function GenerationPage() {
             {/* SEO Metadata — stacked with labeled copy buttons */}
             {hasMeta && (
               <div className="shrink-0 flex flex-col gap-1.5 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2.5 dark:border-emerald-800/40 dark:bg-emerald-900/10">
+                {isCompleted && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => setIsSeoEditOpen(true)}
+                      className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-blue-600 transition-colors hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30"
+                    >
+                      <Sparkles className="h-3 w-3" />
+                      Edit with AI
+                    </button>
+                  </div>
+                )}
                 {generation.seoTitle && (
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
@@ -537,6 +556,11 @@ export default function GenerationPage() {
                         key={block.id}
                         id={`article-block-${block.id}`}
                         className="scroll-mt-2 transition-[box-shadow,border-radius] duration-500"
+                        onContextMenu={(e) => {
+                          if (!isCompleted) return;
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, blockId: block.id });
+                        }}
                       >
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>{getBlockMarkdown(block)}</ReactMarkdown>
                       </section>
@@ -713,6 +737,47 @@ export default function GenerationPage() {
           </div>
         </div>
       </Modal>
+
+      {/* ════════════════ Block Context Menu + Edit Modals ════════════════ */}
+      {contextMenu && (
+        <BlockContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          blockId={contextMenu.blockId}
+          onEditWithAI={(blockId) => {
+            const block = blocks.find(b => b.id === blockId);
+            if (block) setEditingBlock(block);
+            setContextMenu(null);
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {editingBlock && (
+        <BlockEditModal
+          isOpen={true}
+          onClose={() => setEditingBlock(null)}
+          generationId={generationId}
+          block={editingBlock}
+          onSuccess={() => {
+            setEditingBlock(null);
+            toast.success('Block updated');
+          }}
+        />
+      )}
+
+      <SeoEditModal
+        isOpen={isSeoEditOpen}
+        onClose={() => setIsSeoEditOpen(false)}
+        generationId={generationId}
+        currentTitle={generation?.seoTitle}
+        currentDescription={generation?.seoDescription}
+        onSuccess={(title, description) => {
+          setGeneration(prev => prev ? { ...prev, seoTitle: title, seoDescription: description } : prev);
+          setIsSeoEditOpen(false);
+          toast.success('SEO metadata updated');
+        }}
+      />
     </div>
   );
 }

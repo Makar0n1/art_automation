@@ -244,4 +244,22 @@ export const generationsApi = {
     const response = await api.get<ApiResponse>('/generations/queue/stats');
     return response.data;
   },
+
+  editBlock: async (id: string, blockId: number, prompt: string) => {
+    const response = await api.post<ApiResponse>(
+      `/generations/${id}/edit-block`,
+      { blockId, prompt },
+      { timeout: 120000 }
+    );
+    return response.data;
+  },
+
+  editSeo: async (id: string, prompt: string) => {
+    const response = await api.post<ApiResponse>(
+      `/generations/${id}/edit-seo`,
+      { prompt },
+      { timeout: 120000 }
+    );
+    return response.data;
+  },
 };

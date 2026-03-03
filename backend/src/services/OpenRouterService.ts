@@ -1742,4 +1742,160 @@ Return ONLY the JSON, no other text.`;
     }
   }
 
+  /**
+   * Edit a single block based on user's free-form prompt.
+   * Receives all blocks for style/context matching.
+   */
+  async editBlockContent(
+    targetBlock: { id: number; type: string; heading: string; content: string },
+    allBlocks: Array<{ id: number; type: string; heading: string; content?: string }>,
+    userPrompt: string,
+    language: string,
+    articleType: string = 'informational',
+    comment?: string
+  ): Promise<string> {
+    const languageNames: Record<string, string> = {
+      'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
+      'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'uk': 'Ukrainian',
+      'nl': 'Dutch', 'pt': 'Portuguese',
+    };
+    const langName = languageNames[language] || 'English';
+    const wordCount = targetBlock.content.split(/\s+/).filter(w => w.length > 0).length;
+
+    let styleInstructions = '';
+    if (comment) {
+      styleInstructions = `\n6. Follow author's style instructions: ${comment}`;
+    }
+
+    let typeInstructions = '';
+    if (articleType === 'informational') {
+      typeInstructions = '\n7. INFORMATIONAL ARTICLE: Remove ANY commercial content, pricing, selling language';
+    } else if (articleType === 'commercial') {
+      typeInstructions = '\n7. COMMERCIAL ARTICLE: Keep pricing and commercial elements';
+    }
+
+    // Build context summary from other blocks
+    const contextSummary = allBlocks
+      .filter(b => b.id !== targetBlock.id && b.content)
+      .map(b => `[${b.type.toUpperCase()}] ${b.heading}: ${b.content!.substring(0, 120).replace(/\n/g, ' ')}...`)
+      .join('\n');
+
+    const systemPrompt = `You are a professional article editor. Rewrite ONLY the target block based on the user's instructions.
+
+CRITICAL RULES:
+1. PRESERVE ALL LINKS — any markdown links [text](url) MUST remain exactly as they are
+2. Keep approximately ${wordCount} words (±10%). Do NOT significantly expand or shrink the block
+3. Match the tone and style of the surrounding article blocks
+4. Write in ${langName}
+5. Return ONLY the rewritten content, no explanations or code blocks${styleInstructions}${typeInstructions}`;
+
+    const userPromptFull = `=== ARTICLE CONTEXT (other blocks for reference) ===
+${contextSummary}
+
+=== TARGET BLOCK TO EDIT ===
+Type: ${targetBlock.type}
+Heading: ${targetBlock.heading}
+Word count: ${wordCount}
+
+${targetBlock.content}
+
+=== USER INSTRUCTION ===
+${userPrompt}
+
+Rewrite the target block following the user's instruction. Return ONLY the improved content:`;
+
+    try {
+      const response = await this.chat(systemPrompt, userPromptFull, 0.4);
+      let fixedContent = response.trim();
+      fixedContent = fixedContent.replace(/^```(?:markdown|md)?\n?/gm, '').replace(/\n?```$/gm, '');
+
+      logger.info(`Edited block ${targetBlock.id}: ${wordCount} → ${fixedContent.split(/\s+/).filter(w => w.length > 0).length} words`);
+      return fixedContent;
+    } catch (error) {
+      logger.error(`Failed to edit block ${targetBlock.id}`, { error });
+      throw error;
+    }
+  }
+
+  /**
+   * Regenerate SEO metadata based on user's prompt.
+   */
+  async editSeoMetadata(
+    article: string,
+    currentTitle: string,
+    currentDescription: string,
+    mainKeyword: string,
+    userPrompt: string,
+    language: string,
+    articleType: string = 'informational',
+    comment?: string
+  ): Promise<{ title: string; description: string }> {
+    const languageNames: Record<string, string> = {
+      'en': 'English', 'de': 'German', 'ru': 'Russian', 'fr': 'French',
+      'es': 'Spanish', 'it': 'Italian', 'pl': 'Polish', 'uk': 'Ukrainian',
+      'nl': 'Dutch', 'pt': 'Portuguese',
+    };
+    const langName = languageNames[language] || 'English';
+
+    let typeHint = '';
+    if (articleType === 'informational') {
+      typeHint = '\n- INFORMATIONAL article: Focus on education, learning, information value';
+    } else if (articleType === 'commercial') {
+      typeHint = '\n- COMMERCIAL article: Include conversion elements, urgency, benefits';
+    }
+
+    let styleHint = '';
+    if (comment) {
+      styleHint = `\n- Follow author's tone/style: ${comment.substring(0, 200)}`;
+    }
+
+    const systemPrompt = `You are an SEO expert editing article metadata.
+
+Rules:
+- Write in ${langName}
+- Include the main keyword naturally
+- Title: max 60 characters, compelling, click-worthy
+- Description: max 160 characters, includes call-to-action, summarizes value${typeHint}${styleHint}
+- Return valid JSON only`;
+
+    const userPromptFull = `Edit the SEO metadata based on the instruction below.
+
+Main keyword: "${mainKeyword}"
+
+Current title: "${currentTitle}"
+Current description: "${currentDescription}"
+
+=== ARTICLE (first 2000 chars) ===
+${article.substring(0, 2000)}
+
+=== USER INSTRUCTION ===
+${userPrompt}
+
+Return JSON:
+{
+  "title": "New SEO title (max 60 chars)",
+  "description": "New meta description (max 160 chars)"
+}
+
+Return ONLY the JSON, no other text.`;
+
+    try {
+      const response = await this.chat(systemPrompt, userPromptFull, 0.5);
+      const cleanedResponse = response
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+
+      const seo = JSON.parse(cleanedResponse);
+      const title = (seo.title || currentTitle).substring(0, 60);
+      const description = (seo.description || currentDescription).substring(0, 160);
+
+      logger.info(`Edited SEO metadata: title=${title.length} chars, desc=${description.length} chars`);
+      return { title, description };
+    } catch (error) {
+      logger.error('Failed to edit SEO metadata', { error });
+      throw error;
+    }
+  }
+
 }

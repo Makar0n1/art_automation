@@ -1,12 +1,12 @@
 /**
  * Dashboard Overview Page — right-rail layout with premium visual polish
- * Left 7/12: Recent Generations (full height, dense rows, color stripes)
+ * Left 7/12: Generations (infinite scroll, sorted by updatedAt)
  * Right 5/12: KPI 2x2 grid + Projects list (visual anchor, accented)
  */
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import {
   FolderPlus,
@@ -21,6 +21,8 @@ import { Card, CardHeader, CardTitle, CardContent, Button, Badge, ProgressBar } 
 import { projectsApi, generationsApi } from '@/lib/api';
 import { Project, Generation, QueueStats, GenerationStatus } from '@/types';
 import { formatRelativeTime, getStatusLabel } from '@/lib/utils';
+
+const PAGE_SIZE = 20;
 
 /* ── Status → left-stripe color mapping ── */
 const statusStripeColor = (status: GenerationStatus): string => {
@@ -39,39 +41,101 @@ const statusStripeColor = (status: GenerationStatus): string => {
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [recentGenerations, setRecentGenerations] = useState<Generation[]>([]);
+  const [generationsMap, setGenerationsMap] = useState<Map<string, Generation>>(new Map());
+  const [totalGenerations, setTotalGenerations] = useState(0);
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [projectsRes, generationsRes, statsRes] = await Promise.all([
-          projectsApi.getAll(),
-          generationsApi.getAll({ limit: 20 }),
-          generationsApi.getQueueStats(),
-        ]);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-        if (projectsRes.success) {
-          setProjects(projectsRes.data as Project[]);
-        }
-        if (generationsRes.success) {
-          setRecentGenerations((generationsRes.data as { generations: Generation[] }).generations);
-        }
-        if (statsRes.success) {
-          setQueueStats(statsRes.data as QueueStats);
-        }
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error);
-      } finally {
-        setIsLoading(false);
+  // Derived sorted list
+  const sortedGenerations = useMemo(
+    () =>
+      Array.from(generationsMap.values()).sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      ),
+    [generationsMap]
+  );
+
+  const hasMore = generationsMap.size < totalGenerations;
+
+  // Merge generations into map (deduplicates by _id)
+  const mergeGenerations = useCallback((generations: Generation[], total: number) => {
+    setTotalGenerations(total);
+    setGenerationsMap((prev) => {
+      const next = new Map(prev);
+      for (const gen of generations) next.set(gen._id, gen);
+      return next;
+    });
+  }, []);
+
+  // Fetch page 1 + projects + stats (used for initial load and polling)
+  const fetchData = useCallback(async () => {
+    try {
+      const [projectsRes, generationsRes, statsRes] = await Promise.all([
+        projectsApi.getAll(),
+        generationsApi.getAll({ limit: PAGE_SIZE, offset: 0 }),
+        generationsApi.getQueueStats(),
+      ]);
+
+      if (projectsRes.success) {
+        setProjects(projectsRes.data as Project[]);
       }
-    };
+      if (generationsRes.success) {
+        const data = generationsRes.data as { generations: Generation[]; total: number };
+        mergeGenerations(data.generations, data.total);
+      }
+      if (statsRes.success) {
+        setQueueStats(statsRes.data as QueueStats);
+      }
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mergeGenerations]);
 
+  // Initial load + polling every 10s
+  useEffect(() => {
     fetchData();
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchData]);
+
+  // Load next page (infinite scroll)
+  const loadMore = useCallback(async () => {
+    if (isLoadingMore || !hasMore) return;
+    setIsLoadingMore(true);
+    try {
+      const res = await generationsApi.getAll({ limit: PAGE_SIZE, offset: generationsMap.size });
+      if (res.success) {
+        const data = res.data as { generations: Generation[]; total: number };
+        mergeGenerations(data.generations, data.total);
+      }
+    } catch (error) {
+      console.error('Failed to load more generations:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [isLoadingMore, hasMore, generationsMap.size, mergeGenerations]);
+
+  // IntersectionObserver — trigger loadMore when sentinel enters viewport
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const container = scrollContainerRef.current;
+    if (!sentinel || !container) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) loadMore();
+      },
+      { root: container, rootMargin: '200px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
 
   const isActive = (status: GenerationStatus) =>
     status !== GenerationStatus.COMPLETED &&
@@ -118,16 +182,19 @@ export default function DashboardPage() {
 
       {/* Main grid: left 7/12 + right 5/12 */}
       <div className="grid min-h-0 flex-1 grid-cols-12 gap-3">
-        {/* LEFT: Recent Generations — full height, card shine, hairline border */}
+        {/* LEFT: Generations — infinite scroll, card shine, hairline border */}
         <Card className="card-shine col-span-7 flex flex-col overflow-hidden border-gray-100/80 !p-0 dark:border-gray-700/40">
           <CardHeader className="shrink-0 border-b border-gray-100/60 !px-3 !py-2.5 dark:border-gray-700/30">
             <CardTitle className="flex items-center gap-2 text-sm">
               <FileText className="h-4 w-4 text-gray-400" />
-              Recent Generations
+              Generations
+              {totalGenerations > 0 && (
+                <span className="text-xs font-normal text-gray-400">({totalGenerations})</span>
+              )}
             </CardTitle>
           </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-y-auto !px-3 !pb-2.5 !pt-2">
-            {recentGenerations.length === 0 ? (
+          <CardContent ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto !px-3 !pb-2.5 !pt-2">
+            {sortedGenerations.length === 0 ? (
               <div className="flex h-full items-center justify-center text-center text-gray-500 dark:text-gray-400">
                 <div>
                   <FileText className="mx-auto h-10 w-10 opacity-50" />
@@ -137,7 +204,7 @@ export default function DashboardPage() {
               </div>
             ) : (
               <div className="space-y-1.5">
-                {recentGenerations.map((gen) => (
+                {sortedGenerations.map((gen) => (
                   <Link
                     key={gen._id}
                     href={`/dashboard/generation/${gen._id}`}
@@ -181,6 +248,13 @@ export default function DashboardPage() {
                     )}
                   </Link>
                 ))}
+
+                {/* Sentinel for infinite scroll */}
+                <div ref={sentinelRef} className="flex justify-center py-2">
+                  {isLoadingMore && (
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-500" />
+                  )}
+                </div>
               </div>
             )}
           </CardContent>
