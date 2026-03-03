@@ -7,6 +7,7 @@ import { useTypewriter } from '@/hooks/useTypewriter';
 
 interface TypewriterMarkdownProps {
   content: string;
+  oldContent?: string;
   enabled: boolean;
   onComplete?: () => void;
   className?: string;
@@ -14,16 +15,20 @@ interface TypewriterMarkdownProps {
 
 export const TypewriterMarkdown = memo(function TypewriterMarkdown({
   content,
+  oldContent,
   enabled,
   onComplete,
   className,
 }: TypewriterMarkdownProps) {
   const { displayText, isTyping } = useTypewriter({
     text: content,
+    oldText: oldContent,
     enabled,
     mode: 'word',
-    speed: 25,
-    chunksPerFrame: 4,
+    speed: 12,
+    chunksPerFrame: 8,
+    eraseSpeed: 8,
+    eraseChunksPerFrame: 15,
     onComplete,
   });
 

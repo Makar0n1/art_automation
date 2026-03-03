@@ -77,13 +77,14 @@ const getBlockMarkdown = (block: ArticleBlock): string => {
   }
 };
 
-/** SEO field with typewriter animation */
-const SeoField = ({ label, maxLen, value, animating, onCopy, isCopied, onAnimationDone }: {
-  label: string; maxLen: number; value: string; animating: boolean;
+/** SEO field with backspace→type animation */
+const SeoField = ({ label, maxLen, value, oldValue, animating, onCopy, isCopied, onAnimationDone }: {
+  label: string; maxLen: number; value: string; oldValue?: string; animating: boolean;
   onCopy: () => void; isCopied: boolean; onAnimationDone: () => void;
 }) => {
   const { displayText, isTyping } = useTypewriter({
-    text: value, enabled: animating, mode: 'char', speed: 20, chunksPerFrame: 1,
+    text: value, oldText: oldValue, enabled: animating, mode: 'char',
+    speed: 20, chunksPerFrame: 2, eraseSpeed: 10, eraseChunksPerFrame: 8,
     onComplete: onAnimationDone,
   });
   const isDark = label.includes('Description');
@@ -137,8 +138,9 @@ export default function GenerationPage() {
   const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
   const [isCostOpen, setIsCostOpen] = useState(false);
   const [editingBlockIds, setEditingBlockIds] = useState<Set<number>>(new Set());
-  const [typingBlockIds, setTypingBlockIds] = useState<Set<number>>(new Set());
+  const [animatingBlocks, setAnimatingBlocks] = useState<Map<number, { oldContent: string }>>(new Map());
   const [seoAnimating, setSeoAnimating] = useState(false);
+  const [seoOldValues, setSeoOldValues] = useState<{ title: string; description: string }>({ title: '', description: '' });
   const pendingScrollBlockIdRef = useRef<number | null>(null);
   const prevBlocksRef = useRef<ArticleBlock[]>([]);
 
@@ -208,10 +210,11 @@ export default function GenerationPage() {
           const pb = prev.find(b => b.id === nb.id);
 
           if (scrollId === nb.id) {
-            // This block was edited/reverted — remove overlay, start typewriter
+            // This block was edited/reverted — remove overlay, start erase→type animation
             pendingScrollBlockIdRef.current = null;
             setEditingBlockIds(s => { const n = new Set(s); n.delete(nb.id); return n; });
-            setTypingBlockIds(s => new Set(s).add(nb.id));
+            const oldContent = pb ? getBlockMarkdown(pb) : '';
+            setAnimatingBlocks(m => { const n = new Map(m); n.set(nb.id, { oldContent }); return n; });
             // Scroll to it
             setTimeout(() => {
               const el = document.getElementById(`article-block-${nb.id}`);
@@ -220,15 +223,12 @@ export default function GenerationPage() {
               if (se) se.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 150);
           } else if (!pb || !pb.content) {
-            // New block during generation — snap previous typing, start this one
-            setTypingBlockIds(s => {
-              const n = new Set<number>();
-              n.add(nb.id); // only this block types
-              return n;
-            });
+            // New block during generation — snap previous, type-only (no erase)
+            setAnimatingBlocks(() => new Map([[nb.id, { oldContent: '' }]]));
           } else if (pb.content !== nb.content) {
             // Content changed (revert via Socket.IO without pendingScroll)
-            setTypingBlockIds(s => new Set(s).add(nb.id));
+            const oldContent = getBlockMarkdown(pb);
+            setAnimatingBlocks(m => { const n = new Map(m); n.set(nb.id, { oldContent }); return n; });
           }
         }
 
@@ -236,13 +236,17 @@ export default function GenerationPage() {
         setGeneration(prev => prev ? { ...prev, articleBlocks: newBlocks } : null);
       },
       onSeo: (data) => {
-        setGeneration(prev => prev ? { ...prev, ...data } : null);
+        setGeneration(prev => {
+          if (prev) setSeoOldValues({ title: prev.seoTitle || '', description: prev.seoDescription || '' });
+          return prev ? { ...prev, ...data } : null;
+        });
         setSeoAnimating(true);
       },
       onCompleted: (article) => {
-        setGeneration(prev =>
-          prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null
-        );
+        setGeneration(prev => {
+          if (prev) setSeoOldValues({ title: prev.seoTitle || '', description: prev.seoDescription || '' });
+          return prev ? { ...prev, status: GenerationStatus.COMPLETED, progress: 100, article } : null;
+        });
         setSeoAnimating(true);
         toast.success('Article generation completed!');
       },
@@ -518,6 +522,7 @@ export default function GenerationPage() {
               {generation.seoTitle && (
                 <SeoField
                   label="SEO Title" maxLen={60} value={generation.seoTitle}
+                  oldValue={seoOldValues.title}
                   animating={seoAnimating} onCopy={copySeoTitle} isCopied={isTitleCopied}
                   onAnimationDone={() => {}}
                 />
@@ -525,6 +530,7 @@ export default function GenerationPage() {
               {generation.seoDescription && (
                 <SeoField
                   label="SEO Description" maxLen={160} value={generation.seoDescription}
+                  oldValue={seoOldValues.description}
                   animating={seoAnimating} onCopy={copySeoDescription} isCopied={isDescCopied}
                   onAnimationDone={() => setSeoAnimating(false)}
                 />
@@ -569,7 +575,8 @@ export default function GenerationPage() {
                   <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h1:mt-0 prose-h2:text-lg prose-h2:mt-5 prose-h2:mb-2 prose-h3:text-base prose-h3:mt-3 prose-h3:mb-1.5 prose-p:my-2 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-strong:text-gray-900 dark:prose-strong:text-white prose-table:w-full prose-table:border-collapse prose-th:border prose-th:border-gray-300 prose-th:bg-gray-50 prose-th:px-3 prose-th:py-1.5 prose-th:text-left prose-th:text-xs prose-th:font-semibold prose-td:border prose-td:border-gray-200 prose-td:px-3 prose-td:py-1.5 prose-td:text-xs dark:prose-th:border-gray-600 dark:prose-th:bg-gray-800 dark:prose-td:border-gray-700 prose-a:text-blue-600 prose-a:underline dark:prose-a:text-blue-400 prose-blockquote:border-l-4 prose-blockquote:border-blue-400 prose-blockquote:bg-blue-50/50 prose-blockquote:pl-4 prose-blockquote:pr-3 prose-blockquote:py-2 prose-blockquote:italic prose-blockquote:text-gray-700 dark:prose-blockquote:border-blue-500 dark:prose-blockquote:bg-blue-900/20 dark:prose-blockquote:text-gray-300 prose-blockquote:rounded-r-lg prose-blockquote:not-italic">
                     {blocksWithContent.map(block => {
                       const isBlockEditing = editingBlockIds.has(block.id);
-                      const isBlockTyping = typingBlockIds.has(block.id);
+                      const blockAnim = animatingBlocks.get(block.id);
+                      const isBlockAnimating = !!blockAnim;
 
                       return (
                         <section
@@ -587,11 +594,12 @@ export default function GenerationPage() {
                               <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
                             </div>
                           )}
-                          {isBlockTyping ? (
+                          {isBlockAnimating ? (
                             <TypewriterMarkdown
                               content={getBlockMarkdown(block)}
+                              oldContent={blockAnim!.oldContent}
                               enabled={true}
-                              onComplete={() => setTypingBlockIds(s => { const n = new Set(s); n.delete(block.id); return n; })}
+                              onComplete={() => setAnimatingBlocks(m => { const n = new Map(m); n.delete(block.id); return n; })}
                             />
                           ) : (
                             <ReactMarkdown remarkPlugins={[remarkGfm]}>{getBlockMarkdown(block)}</ReactMarkdown>
