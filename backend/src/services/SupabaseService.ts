@@ -535,6 +535,7 @@ Rules:
       return {
         question,
         answer: perplexityAnswer,
+        source: 'perplexity-ai-research',
         similarity: 0.95,
       };
     } catch (error) {

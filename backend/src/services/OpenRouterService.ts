@@ -611,6 +611,10 @@ ${block.answeredQuestions!.map((aq, i) => `${i + 1}. ${aq.question}
    ${aq.source ? `Source: ${aq.source}` : ''}`).join('\n')}
 
 You MUST incorporate these facts naturally into the text. These are verified information from reliable sources.
+When a fact has a Source, CITE IT as plain text in the article (NOT a hyperlink — just the domain name or site name).
+Examples: "laut ug-gwc.de", "gemäß Angaben von ghostwriter-texte.de", "according to example.com".
+This adds credibility and helps the reader verify the information. Use the short domain name, not the full URL path.
+Do NOT cite sources marked as "perplexity-ai-research" — these are internal research references, not public URLs.
 `;
     }
 
@@ -664,23 +668,27 @@ ${hasFactsFromResearch ? '- MUST include the verified facts provided above, inte
 
       case 'conclusion':
         {
-          // Scale conclusion: ~10% of target word count for a proper wrap-up
-          const concTarget = Math.round(targetWordCount * 0.10);
-          const concMin = Math.max(120, concTarget - 30);
-          const concMax = concTarget + 50;
+          // Scale conclusion: ~12% of target word count for a substantive wrap-up
+          const concTarget = Math.round(targetWordCount * 0.12);
+          const concMin = Math.max(180, concTarget - 30);
+          const concMax = concTarget + 70;
           estimatedWords = concTarget;
           blockTypeInstructions = `Write a COMPREHENSIVE conclusion that wraps up the entire article. ${concMin}-${concMax} words.
 
+WARNING: A conclusion of 2-3 sentences is UNACCEPTABLE. This must be a full, substantive paragraph (or two) that gives the reader a complete final picture. Aim for 6-10 sentences minimum.
+
 This conclusion must feel like a PROPER ENDING, not an abrupt stop. Structure:
 
-1. SYNTHESIS (not just summary): Connect the key insights from all previous sections into a coherent final picture. Show how the different parts relate to each other.
-2. KEY TAKEAWAYS: Distill 3-5 concrete, actionable takeaways the reader should remember. These should be specific, not generic platitudes.
+1. SYNTHESIS (not just summary): Connect the key insights from all previous sections into a coherent final picture. If the article compares options/providers/products, briefly characterize each one (who it's best for, key strength) so the reader gets a clear decision framework.
+2. KEY TAKEAWAYS: Distill 3-5 concrete, actionable takeaways the reader should remember. These should be specific, not generic platitudes. Reference real data from the article (prices, features, criteria).
 3. FINAL PERSPECTIVE: End with a strong, memorable closing thought — a recommendation, a forward-looking statement, or a decisive opinion that puts a definitive period on the article.
 
 IMPORTANT:
 - Reference specific concepts, data, or examples from the article above — prove you've read the whole thing
+- If the article reviewed multiple options, the reader must leave knowing WHICH option fits WHICH need
 - Do NOT introduce completely new topics
 - Do NOT use generic filler like "In conclusion..." or "To summarize..."
+- Do NOT write a 2-sentence stub — this is the MOST IMPORTANT section for the reader's final impression
 - Make the reader feel they've gained clear, complete knowledge on this topic`;
         }
         break;
