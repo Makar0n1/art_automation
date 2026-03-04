@@ -141,9 +141,9 @@ export default function GenerationPage() {
   const [seoOldValues, setSeoOldValues] = useState<{ title: string; description: string }>({ title: '', description: '' });
   const pendingScrollBlockIdRef = useRef<number | null>(null);
   const prevBlocksRef = useRef<ArticleBlock[]>([]);
+  const isActiveRef = useRef(false);
 
   /* refs */
-  const logsEndRef       = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
   const articleScrollRef = useRef<HTMLDivElement>(null);
 
@@ -154,6 +154,9 @@ export default function GenerationPage() {
   const isQueued     = generation?.status === GenerationStatus.QUEUED;
   const isActive     = !!generation && !isCompleted && !isFailed;
   const isInProgress = isActive && !isQueued;
+
+  // Keep ref in sync for socket callbacks (no stale closure)
+  isActiveRef.current = isActive;
 
   const blocks            = generation?.articleBlocks?.filter(b => b && b.type) || [];
   const blocksWithContent = blocks.filter(b => b.content);
@@ -191,9 +194,11 @@ export default function GenerationPage() {
     fetchGeneration();
   }, [generationId, router]);
 
-  // Socket.IO
+  // Socket.IO — subscribe once when generation is loaded, not on every state change.
+  // All callbacks use setter functions with `prev` or refs, so no stale closures.
+  const generationLoaded = !!generation;
   useEffect(() => {
-    if (!generation) return;
+    if (!generationLoaded) return;
     const token = localStorage.getItem('token');
     if (token) initSocket(token);
 
@@ -227,9 +232,16 @@ export default function GenerationPage() {
             // New block during generation — snap previous, type-only (no erase)
             setAnimatingBlocks(() => new Map([[nb.id, { oldContent: '' }]]));
           } else if (pb.content !== nb.content) {
-            // Content changed (revert via Socket.IO without pendingScroll)
+            // Content changed during pipeline (link insertion / review) or revert
             const oldContent = getBlockMarkdown(pb);
             setAnimatingBlocks(m => { const n = new Map(m); n.set(nb.id, { oldContent }); return n; });
+            // Auto-scroll to changed block during active generation (Steps 6-7)
+            if (isActiveRef.current) {
+              setTimeout(() => {
+                const el = document.getElementById(`article-block-${nb.id}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 100);
+            }
           }
         }
 
@@ -244,7 +256,7 @@ export default function GenerationPage() {
         setSeoAnimating(true);
       },
       onCompleted: async (article) => {
-        // Re-fetch to get SEO metadata (not included in completed event)
+        // Re-fetch to get full data including SEO metadata
         try {
           const response = await generationsApi.getOne(generationId);
           if (response.success) {
@@ -276,11 +288,14 @@ export default function GenerationPage() {
       },
     });
     return () => { unsubscribe(); };
-  }, [generation, generationId, router]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [generationLoaded, generationId]);
 
-  // Auto-scroll logs only when at bottom
+  // Auto-scroll logs — instant scroll to keep up with fast-arriving logs
   useEffect(() => {
-    if (isLogsAtBottom) logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isLogsAtBottom) return;
+    const el = logsContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [logs, isLogsAtBottom]);
 
   // Auto-scroll article preview during generation (not during edit/revert)
@@ -299,11 +314,12 @@ export default function GenerationPage() {
   const handleLogsScroll = useCallback(() => {
     const el = logsContainerRef.current;
     if (!el) return;
-    setIsLogsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 50);
+    setIsLogsAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
   }, []);
 
   const jumpToLatest = () => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = logsContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
     setIsLogsAtBottom(true);
   };
 
@@ -503,7 +519,7 @@ export default function GenerationPage() {
             <div className="shrink-0 rounded-lg border border-emerald-200/60 bg-emerald-50/40 px-3 py-2 dark:border-emerald-800/40 dark:bg-emerald-900/10">
               <div className="flex items-center gap-3">
                 {/* SEO fields — inline */}
-                <div className="flex flex-1 min-w-0 items-center gap-1">
+                <div className="flex min-w-0 items-center gap-1">
                   {generation.seoTitle && (
                     <SeoField
                       label="Title" maxLen={60} value={generation.seoTitle}
@@ -783,7 +799,7 @@ export default function GenerationPage() {
                       <span className="break-words">{log.message}</span>
                     </div>
                   ))}
-                  <div ref={logsEndRef} />
+                  <div />
                 </div>
               )}
             </div>

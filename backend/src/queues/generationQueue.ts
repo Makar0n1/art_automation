@@ -1521,8 +1521,13 @@ export const startQueueProcessor = () => {
           seoDescription: seoMetadata.description,
         });
 
-        // Emit updated blocks
+        // Emit updated blocks + SEO metadata to frontend
         emitBlocks(generationId, reviewedBlocks);
+        emitToClient(`generation:${generationId}`, 'generation:seo', {
+          generationId,
+          seoTitle: seoMetadata.title,
+          seoDescription: seoMetadata.description,
+        });
 
         // Log step duration and token usage
         const reviewDuration = Date.now() - stepStartTime;
