@@ -1439,8 +1439,14 @@ export const startQueueProcessor = () => {
                 blockIdsWithLinks.add(block.id);
               }
             }
-            if (blockIdsWithLinks.size > 0) {
-              await addLog(generationId, 'info', `  🔒 Blocks with links (protected from trim/expand): ${[...blockIdsWithLinks].map(id => `#${id}`).join(', ')}`);
+            const protectedBlockIds = new Set<number>([...blockIdsWithLinks]);
+            for (const block of reviewedBlocks) {
+              if (['intro', 'conclusion', 'faq'].includes(block.type)) {
+                protectedBlockIds.add(block.id);
+              }
+            }
+            if (protectedBlockIds.size > 0) {
+              await addLog(generationId, 'info', `  🔒 Protected blocks (links + intro/conclusion/faq): ${[...protectedBlockIds].map(id => `#${id}`).join(', ')}`);
             }
 
             // Recount words after all fixes above
@@ -1450,7 +1456,7 @@ export const startQueueProcessor = () => {
 
             if (currentTotal < configMinWords) {
               const contentBlocks = reviewedBlocks
-                .filter(b => (b.type === 'h2' || b.type === 'h3') && !blockIdsWithLinks.has(b.id))
+                .filter(b => (b.type === 'h2' || b.type === 'h3') && !protectedBlockIds.has(b.id))
                 .sort((a, b) => (a.content?.length || 0) - (b.content?.length || 0));
               const wordsNeeded = configMinWords - currentTotal;
               const blocksToExpand = contentBlocks.slice(0, Math.min(3, contentBlocks.length));
@@ -1473,13 +1479,13 @@ export const startQueueProcessor = () => {
               }
             } else if (currentTotal > configMaxWords) {
               // Smart AI-driven trimming: AI decides which blocks to shorten (blocks with links are protected)
-              await addLog(generationId, 'thinking', `Article is ${currentTotal} words (max ${configMaxWords}). AI choosing which blocks to trim (${blockIdsWithLinks.size} blocks protected)...`);
+              await addLog(generationId, 'thinking', `Article is ${currentTotal} words (max ${configMaxWords}). AI choosing which blocks to trim (${protectedBlockIds.size} blocks protected)...`);
               const trimPlan = await openRouterForReview.smartTrimArticle(
                 reviewedBlocks.map(b => ({ id: b.id, type: b.type, heading: b.heading, content: b.content })),
                 currentTotal,
                 configMaxWords,
                 generation.config.language,
-                blockIdsWithLinks,
+                protectedBlockIds,
                 generation.config.comment,
                 reviewedBlocks
                   .filter(b => b.answeredQuestions && b.answeredQuestions.length > 0)
@@ -1505,7 +1511,7 @@ export const startQueueProcessor = () => {
                 // Fallback: trim the 2 longest blocks WITHOUT links
                 await addLog(generationId, 'thinking', `Smart trim returned empty, falling back to longest blocks (excluding link blocks)...`);
                 const longestBlocks = reviewedBlocks
-                  .filter(b => (b.type === 'h2' || b.type === 'h3') && !blockIdsWithLinks.has(b.id))
+                  .filter(b => (b.type === 'h2' || b.type === 'h3') && !protectedBlockIds.has(b.id))
                   .sort((a, b) => (b.content?.length || 0) - (a.content?.length || 0))
                   .slice(0, 2);
                 for (const block of longestBlocks) {

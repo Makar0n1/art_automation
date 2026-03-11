@@ -1546,7 +1546,8 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       .map(b => {
         const words = b.content!.split(/\s+/).length;
         const hasLink = blockIdsWithLinks.has(b.id) ? ' ⛔ CONTAINS LINK — DO NOT TRIM' : '';
-        return `[BLOCK ${b.id}] ${b.type.toUpperCase()}: "${b.heading}" — ${words} words${hasLink}`;
+        const isProtected = ['intro', 'conclusion', 'faq'].includes(b.type) ? ' ⛔ PROTECTED — DO NOT TRIM' : '';
+        return `[BLOCK ${b.id}] ${b.type.toUpperCase()}: "${b.heading}" — ${words} words${hasLink}${isProtected}`;
       })
       .join('\n');
 
@@ -1559,8 +1560,7 @@ Analyze each block and decide which blocks can be shortened WITHOUT losing quali
 
 ABSOLUTELY FORBIDDEN to trim:
 - Blocks marked with "⛔ CONTAINS LINK" — these have carefully inserted internal links that WILL BREAK if text is changed
-- Introduction and conclusion (trim lightly at most)
-- FAQ section
+- Blocks marked with "⛔ PROTECTED" — introduction, conclusion and FAQ must never be trimmed; they are structurally critical
 
 PROTECT from heavy cutting:
 - Blocks with specific data, statistics, or expert information
