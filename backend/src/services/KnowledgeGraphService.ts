@@ -28,14 +28,12 @@ export class KnowledgeGraphService {
    */
   private async fetchEntitiesForKeyword(
     keyword: string,
-    language: string,
     limit = 10
   ): Promise<KnowledgeGraphEntity[]> {
     const response = await axios.get(KG_API_URL, {
       params: {
         query: keyword,
         key: this.apiKey,
-        languages: language,
         limit,
       },
       timeout: 8000,
@@ -62,18 +60,41 @@ export class KnowledgeGraphService {
    * Returns entity names suitable for use as LSI keywords.
    * On any error, returns empty array (non-blocking).
    */
-  async getLsiEntities(keywords: string[], language: string): Promise<string[]> {
+  async getLsiEntities(keywords: string[]): Promise<string[]> {
     if (!keywords.length) return [];
 
     const seen = new Set<string>();
     const allEntities: KnowledgeGraphEntity[] = [];
 
-    // Main keyword gets more results (15), additional keywords get fewer (8)
+    // Expand compound keywords into individual words for better KG coverage
+    // e.g. 'ghostwriter bachelorarbeit' → ['ghostwriter bachelorarbeit', 'ghostwriter', 'bachelorarbeit']
+    const expandedKeywords: Array<{ query: string; isMain: boolean }> = [];
     for (let i = 0; i < keywords.length; i++) {
-      const keyword = keywords[i];
-      const limit = i === 0 ? 15 : 8;
+      const kw = keywords[i];
+      expandedKeywords.push({ query: kw, isMain: i === 0 });
+      const words = kw.trim().split(/\s+/);
+      if (words.length > 1) {
+        for (const word of words) {
+          if (word.length > 3) {
+            expandedKeywords.push({ query: word, isMain: false });
+          }
+        }
+      }
+    }
+
+    // Deduplicate queries
+    const seenQueries = new Set<string>();
+    const uniqueQueries = expandedKeywords.filter(({ query }) => {
+      const key = query.toLowerCase();
+      if (seenQueries.has(key)) return false;
+      seenQueries.add(key);
+      return true;
+    });
+
+    for (const { query, isMain } of uniqueQueries) {
+      const limit = isMain ? 15 : 8;
       try {
-        const entities = await this.fetchEntitiesForKeyword(keyword, language, limit);
+        const entities = await this.fetchEntitiesForKeyword(query, limit);
         for (const entity of entities) {
           const key = entity.name.toLowerCase();
           if (!seen.has(key)) {
@@ -82,10 +103,9 @@ export class KnowledgeGraphService {
           }
         }
       } catch (error) {
-        logger.warn(`KG entity fetch failed for keyword '${keyword}'`, {
+        logger.warn(`KG entity fetch failed for keyword '${query}'`, {
           error: error instanceof Error ? error.message : String(error),
         });
-        // Continue with remaining keywords
       }
     }
 

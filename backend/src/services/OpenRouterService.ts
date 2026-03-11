@@ -383,10 +383,24 @@ PURPOSE: Questions are used to search a knowledge base and the web for CONCRETE 
         introBlock.heading = ''; // No "Introduction"/"Einleitung" heading
       }
 
-      // Ensure conclusion block has no questions
+      // Ensure conclusion block has no questions + hardcode heading by language
       const conclusionBlock = analysis.recommendedStructure.find(b => b.type === 'conclusion');
       if (conclusionBlock) {
         delete conclusionBlock.questions;
+        const conclusionHeadings: Record<string, string> = {
+          de: 'Fazit',
+          en: 'Conclusion',
+          ru: 'Заключение',
+          fr: 'Conclusion',
+          es: 'Conclusión',
+          it: 'Conclusione',
+          pl: 'Podsumowanie',
+          nl: 'Conclusie',
+          pt: 'Conclusão',
+          cs: 'Závěr',
+          uk: 'Висновок',
+        };
+        conclusionBlock.heading = conclusionHeadings[language] ?? 'Conclusion';
       }
 
       // Ensure FAQ block has no questions
@@ -678,7 +692,7 @@ ${hasFactsFromResearch ? '- MUST include the verified facts provided above, inte
           estimatedWords = Math.round(targetWordCount * 0.13);
           blockTypeInstructions = `Write the conclusion for this article. Think of every section of this article as a musical note — the conclusion is the chord where all those notes sound together and form a complete, resonant harmony. The reader must finish feeling they now hold the full picture, not just a list of things they read.
 
-The length must reflect the article's actual complexity and intent. A focused how-to article may conclude in one strong paragraph. A deep comparison or research piece may need two or three paragraphs to do justice to every thread. Do NOT pad to fill space and do NOT cut short because it feels long enough.
+MINIMUM LENGTH: 2-3 full paragraphs (at least 150 words). A single sentence or a single short paragraph is NEVER acceptable as a conclusion — it signals an incomplete article and destroys the reader's experience. The length must match the article's scope: a focused how-to may need two solid paragraphs; a deep research or comparison piece needs three or more.
 
 STRUCTURE (adapt proportionally to the article's depth):
 1. SYNTHESIS — not a mechanical summary. Weave the key insights together into a unified understanding. If the article covers multiple options, approaches, or aspects, show how they relate and what the overall picture means for the reader

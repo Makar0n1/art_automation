@@ -420,7 +420,7 @@ export const startQueueProcessor = () => {
           if (freshGen) {
             const kgService = new KnowledgeGraphService(apiKeys.google);
             const allKeywords = [freshGen.config.mainKeyword, ...(freshGen.config.keywords || [])];
-            kgLsiEntities = await kgService.getLsiEntities(allKeywords, freshGen.config.language);
+            kgLsiEntities = await kgService.getLsiEntities(allKeywords);
 
             if (kgLsiEntities.length > 0) {
               await addLog(generationId, 'info', `✅ Knowledge Graph: found ${kgLsiEntities.length} entities`, {
