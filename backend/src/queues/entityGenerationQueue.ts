@@ -430,7 +430,7 @@ export const startEntityQueueProcessor = () => {
       await addLog(generationId, 'info', '🔎 Answering questions from research (Supabase + Perplexity)...');
 
       const freshForQA = await Generation.findById(generationId);
-      let blocksWithAnswers = (freshForQA?.articleBlocks || []) as ArticleBlock[];
+      let blocksWithAnswers = ((freshForQA?.articleBlocks || []) as ArticleBlock[]).filter(b => b && b.type);
 
       if (apiKeys.supabase) {
         try {
@@ -516,7 +516,7 @@ export const startEntityQueueProcessor = () => {
       await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, calcProgress(5, 0));
 
       const freshForWriting = await Generation.findById(generationId);
-      const blocksToWrite = (freshForWriting?.articleBlocks || []) as ArticleBlock[];
+      const blocksToWrite = ((freshForWriting?.articleBlocks || []) as ArticleBlock[]).filter(b => b && b.type);
       const configMinWords = generation.config.minWords || 1200;
       const configMaxWords = generation.config.maxWords || 1800;
       const targetWordCount = Math.round((configMinWords + configMaxWords) / 2);
@@ -653,7 +653,7 @@ export const startEntityQueueProcessor = () => {
 
         // Re-use logic from v1 via OpenRouter methods
         const openRouterForLinks = new OpenRouterService(apiKeys.openRouter, aiModel);
-        const blocksForLinks = (await Generation.findById(generationId))?.articleBlocks as ArticleBlock[] || writtenBlocks;
+        const blocksForLinks = (((await Generation.findById(generationId))?.articleBlocks as ArticleBlock[]) || writtenBlocks).filter(b => b && b.type);
 
         try {
           // Select blocks for links
@@ -716,7 +716,7 @@ export const startEntityQueueProcessor = () => {
 
       const openRouterForReview = new OpenRouterService(apiKeys.openRouter, aiModel);
       const genForReview = await Generation.findById(generationId);
-      let reviewedBlocks = (genForReview?.articleBlocks || []) as ArticleBlock[];
+      let reviewedBlocks = ((genForReview?.articleBlocks || []) as ArticleBlock[]).filter(b => b && b.type);
       const currentArticle = genForReview?.article ?? '';
 
       // 7a: Pre-review entity coverage
