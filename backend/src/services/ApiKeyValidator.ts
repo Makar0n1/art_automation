@@ -6,6 +6,7 @@
 
 import axios from 'axios';
 import { FirecrawlService } from './FirecrawlService.js';
+import { KnowledgeGraphService } from './KnowledgeGraphService.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -107,6 +108,13 @@ export class ApiKeyValidator {
       logger.error('Supabase validation error', { error });
       return { isValid: false, error: 'Validation failed' };
     }
+  }
+
+  /**
+   * Validate Google Knowledge Graph API key
+   */
+  static async validateGoogle(apiKey: string): Promise<ValidationResult> {
+    return KnowledgeGraphService.validateApiKey(apiKey);
   }
 
   /**

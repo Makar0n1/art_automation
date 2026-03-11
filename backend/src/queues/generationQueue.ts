@@ -12,6 +12,7 @@ import { GenerationStatus, GenerationLog, SerpResult, ArticleBlock, StructureAna
 import { FirecrawlService } from '../services/FirecrawlService.js';
 import { OpenRouterService } from '../services/OpenRouterService.js';
 import { SupabaseService } from '../services/SupabaseService.js';
+import { KnowledgeGraphService } from '../services/KnowledgeGraphService.js';
 import { publishSocketEvent } from '../utils/redis.js';
 import { decrypt } from '../services/CryptoService.js';
 
@@ -53,6 +54,7 @@ const fetchModelPricing = async (
 interface DecryptedApiKeys {
   openRouter?: string;
   firecrawl?: string;
+  google?: string;
   supabase?: {
     url: string;
     secretKey: string;
@@ -62,6 +64,7 @@ interface DecryptedApiKeys {
 const getDecryptedApiKeys = (user: { apiKeys?: {
   openRouter?: { apiKey?: string };
   firecrawl?: { apiKey?: string };
+  google?: { apiKey?: string };
   supabase?: { url?: string; secretKey?: string };
 }}): DecryptedApiKeys => {
   return {
@@ -70,6 +73,9 @@ const getDecryptedApiKeys = (user: { apiKeys?: {
       : undefined,
     firecrawl: user.apiKeys?.firecrawl?.apiKey
       ? decrypt(user.apiKeys.firecrawl.apiKey)
+      : undefined,
+    google: user.apiKeys?.google?.apiKey
+      ? decrypt(user.apiKeys.google.apiKey)
       : undefined,
     supabase: user.apiKeys?.supabase?.url && user.apiKeys?.supabase?.secretKey
       ? {
@@ -400,6 +406,41 @@ export const startQueueProcessor = () => {
     }
 
     // ========================================
+    // STEP 1.5: Knowledge Graph LSI Enrichment (optional, non-blocking)
+    // ========================================
+    let kgLsiEntities: string[] = [];
+    {
+      const apiKeys = getDecryptedApiKeys(user);
+      if (apiKeys.google) {
+        try {
+          await addLog(generationId, 'info', '🔗 Fetching Knowledge Graph entities for LSI enrichment...');
+          await addLog(generationId, 'thinking', 'Querying Google Knowledge Graph API to auto-generate LSI keywords based on official entity data...');
+
+          const freshGen = await Generation.findById(generationId);
+          if (freshGen) {
+            const kgService = new KnowledgeGraphService(apiKeys.google);
+            const allKeywords = [freshGen.config.mainKeyword, ...(freshGen.config.keywords || [])];
+            kgLsiEntities = await kgService.getLsiEntities(allKeywords, freshGen.config.language);
+
+            if (kgLsiEntities.length > 0) {
+              await addLog(generationId, 'info', `✅ Knowledge Graph: found ${kgLsiEntities.length} entities`, {
+                entities: kgLsiEntities.slice(0, 10),
+              });
+              await addLog(generationId, 'thinking', `Top KG entities: ${kgLsiEntities.slice(0, 8).join(', ')}`);
+            } else {
+              await addLog(generationId, 'thinking', 'Knowledge Graph returned no entities for this keyword — using user LSI only.');
+            }
+          }
+        } catch (error) {
+          await addLog(generationId, 'warn', `⚠️ Knowledge Graph fetch failed (non-critical): ${error instanceof Error ? error.message : 'Unknown error'}`);
+          // Non-blocking — continue without KG entities
+        }
+      } else {
+        await addLog(generationId, 'thinking', 'Google API key not configured — skipping Knowledge Graph LSI enrichment.');
+      }
+    }
+
+    // ========================================
     // STEP 2: Structure Analysis
     // ========================================
     {
@@ -423,6 +464,16 @@ export const startQueueProcessor = () => {
 
       const openRouter = new OpenRouterService(apiKeys.openRouter, aiModel);
 
+      // Merge LSI: KG entities first (higher priority), then user-provided LSI
+      const mergedLsi = [
+        ...kgLsiEntities,
+        ...(freshGeneration.config.lsiKeywords || []).filter(k => !kgLsiEntities.map(e => e.toLowerCase()).includes(k.toLowerCase())),
+      ];
+
+      if (kgLsiEntities.length > 0) {
+        await addLog(generationId, 'thinking', `LSI for structure: ${mergedLsi.length} total (${kgLsiEntities.length} from KG + ${mergedLsi.length - kgLsiEntities.length} user-provided)`);
+      }
+
       try {
         // Analyze structures
         await addLog(generationId, 'thinking', `Sending ${freshGeneration.serpResults.length} competitor structures to AI for analysis...`);
@@ -432,7 +483,7 @@ export const startQueueProcessor = () => {
           freshGeneration.config.language,
           freshGeneration.serpResults,
           freshGeneration.config.keywords || [],
-          freshGeneration.config.lsiKeywords || [],
+          mergedLsi,
           freshGeneration.config.articleType || 'informational',
           freshGeneration.config.comment,
           freshGeneration.config.minWords || 1200,
@@ -514,14 +565,21 @@ export const startQueueProcessor = () => {
       const openRouter = new OpenRouterService(apiKeys.openRouter, aiModel);
 
       try {
+        // Merge KG entities with user LSI (same priority order as Step 2)
+        const enrichLsi = [
+          ...kgLsiEntities,
+          ...(freshGeneration.config.lsiKeywords || []).filter(k => !kgLsiEntities.map(e => e.toLowerCase()).includes(k.toLowerCase())),
+        ];
+
         const enrichedBlocks = await openRouter.enrichBlockInstructions(
           freshGeneration.articleBlocks as ArticleBlock[],
           freshGeneration.config.mainKeyword,
           freshGeneration.config.language,
           freshGeneration.config.keywords || [],
-          freshGeneration.config.lsiKeywords || [],
+          enrichLsi,
           freshGeneration.config.articleType || 'informational',
-          freshGeneration.config.comment
+          freshGeneration.config.comment,
+          kgLsiEntities.length
         );
 
         await updateProgress(generationId, GenerationStatus.ENRICHING_BLOCKS, calcProgress(3, 1));

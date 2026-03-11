@@ -15,6 +15,8 @@ import {
   testSupabase,
   updateFirecrawl,
   testFirecrawl,
+  updateGoogle,
+  testGoogle,
 } from '../controllers/apiKeysController.js';
 import { authenticate } from '../middleware/auth.js';
 
@@ -82,5 +84,17 @@ router.put('/firecrawl', updateFirecrawl);
  * Test Firecrawl API key
  */
 router.post('/firecrawl/test', testFirecrawl);
+
+/**
+ * PUT /api/settings/api-keys/google
+ * Update Google Knowledge Graph API key
+ */
+router.put('/google', updateGoogle);
+
+/**
+ * POST /api/settings/api-keys/google/test
+ * Test Google Knowledge Graph API key
+ */
+router.post('/google/test', testGoogle);
 
 export default router;

@@ -152,6 +152,16 @@ export const apiKeysApi = {
     const response = await api.get<ApiResponse>('/settings/api-keys/openrouter/models');
     return response.data;
   },
+
+  updateGoogle: async (apiKey: string, pinSessionToken?: string) => {
+    const response = await api.put<ApiResponse>('/settings/api-keys/google', { apiKey, pinSessionToken });
+    return response.data;
+  },
+
+  testGoogle: async () => {
+    const response = await api.post<ApiResponse>('/settings/api-keys/google/test');
+    return response.data;
+  },
 };
 
 /**

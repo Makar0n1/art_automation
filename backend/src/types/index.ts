@@ -91,6 +91,11 @@ export interface ApiKeysConfig {
     isValid: boolean;
     lastChecked?: Date;
   };
+  google?: {
+    apiKey: string;
+    isValid: boolean;
+    lastChecked?: Date;
+  };
 }
 
 /**

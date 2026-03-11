@@ -78,6 +78,12 @@ export interface MaskedApiKeys {
     lastChecked?: string;
     maskedKey?: string;
   };
+  google: {
+    isConfigured: boolean;
+    isValid: boolean;
+    lastChecked?: string;
+    maskedKey?: string;
+  };
 }
 
 export interface User {

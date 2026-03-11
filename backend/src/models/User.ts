@@ -30,6 +30,11 @@ const ApiKeysSchema = new Schema({
     isValid: { type: Boolean, default: false },
     lastChecked: { type: Date },
   },
+  google: {
+    apiKey: { type: String, default: '' }, // Encrypted
+    isValid: { type: Boolean, default: false },
+    lastChecked: { type: Date },
+  },
 }, { _id: false });
 
 /**

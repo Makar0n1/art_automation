@@ -209,6 +209,9 @@ export const getMaskedApiKeys = async (
     const firecrawlKey = user.apiKeys?.firecrawl?.apiKey
       ? decrypt(user.apiKeys.firecrawl.apiKey)
       : '';
+    const googleKey = user.apiKeys?.google?.apiKey
+      ? decrypt(user.apiKeys.google.apiKey)
+      : '';
 
     res.json({
       success: true,
@@ -231,6 +234,12 @@ export const getMaskedApiKeys = async (
           isConfigured: !!firecrawlKey,
           isValid: user.apiKeys?.firecrawl?.isValid || false,
           lastChecked: user.apiKeys?.firecrawl?.lastChecked,
+        },
+        google: {
+          maskedKey: googleKey ? maskSensitiveData(googleKey) : '',
+          isConfigured: !!googleKey,
+          isValid: user.apiKeys?.google?.isValid || false,
+          lastChecked: user.apiKeys?.google?.lastChecked,
         },
         hasPinConfigured: !!(await User.findById(userId).select('+pin').then(u => u?.pin)),
       },
@@ -536,6 +545,89 @@ export const testFirecrawl = async (
       res.status(error.statusCode).json({ success: false, error: error.message });
     } else {
       logger.error('Test Firecrawl error', { error });
+      res.status(500).json({ success: false, error: 'Failed to test API key' });
+    }
+  }
+};
+
+/**
+ * Update Google Knowledge Graph API key
+ * PUT /api/settings/api-keys/google
+ */
+export const updateGoogle = async (
+  req: AuthenticatedRequest,
+  res: Response<ApiResponse>
+) => {
+  try {
+    const userId = req.user?.userId;
+    const { apiKey, pinSessionToken } = req.body;
+
+    if (!userId) throw new AppError('User not found', 404);
+    if (!apiKey) throw new AppError('API key is required', 400);
+
+    await requirePinSession(userId, pinSessionToken);
+
+    const encryptedKey = encrypt(apiKey);
+
+    await User.findByIdAndUpdate(userId, {
+      'apiKeys.google.apiKey': encryptedKey,
+      'apiKeys.google.isValid': false,
+      'apiKeys.google.lastChecked': null,
+    });
+
+    logger.info(`Google KG API key updated for user ${userId}`);
+
+    res.json({
+      success: true,
+      message: 'Google API key saved. Test the key to validate.',
+      data: { maskedKey: maskSensitiveData(apiKey) },
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Update Google KG error', { error });
+      res.status(500).json({ success: false, error: 'Failed to update API key' });
+    }
+  }
+};
+
+/**
+ * Test Google Knowledge Graph API key
+ * POST /api/settings/api-keys/google/test
+ */
+export const testGoogle = async (
+  req: AuthenticatedRequest,
+  res: Response<ApiResponse>
+) => {
+  try {
+    const userId = req.user?.userId;
+    if (!userId) throw new AppError('User not found', 404);
+
+    const user = await User.findById(userId);
+    if (!user?.apiKeys?.google?.apiKey) {
+      throw new AppError('Google API key not configured', 400);
+    }
+
+    const decryptedKey = decrypt(user.apiKeys.google.apiKey);
+    const result = await ApiKeyValidator.validateGoogle(decryptedKey);
+
+    await User.findByIdAndUpdate(userId, {
+      'apiKeys.google.isValid': result.isValid,
+      'apiKeys.google.lastChecked': new Date(),
+    });
+
+    res.json({
+      success: result.isValid,
+      data: { isValid: result.isValid },
+      message: result.message,
+      error: result.error,
+    });
+  } catch (error) {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+    } else {
+      logger.error('Test Google KG error', { error });
       res.status(500).json({ success: false, error: 'Failed to test API key' });
     }
   }

@@ -443,7 +443,8 @@ PURPOSE: Questions are used to search a knowledge base and the web for CONCRETE 
     keywords: string[],
     lsiKeywords: string[],
     articleType: string = 'informational',
-    comment?: string
+    comment?: string,
+    kgEntityCount: number = 0
   ): Promise<ArticleBlock[]> {
     const languageNames: Record<string, string> = {
       'en': 'English',
@@ -495,7 +496,7 @@ ${blocksJson}
 
 Main keyword: "${mainKeyword}"
 Additional keywords: ${keywords.join(', ')}
-LSI keywords: ${lsiKeywords.join(', ')}
+LSI keywords${kgEntityCount > 0 ? ` (PRIORITY ORDER — first ${kgEntityCount} items are Google Knowledge Graph entities, distribute these across blocks first before user-provided LSI)` : ''}: ${lsiKeywords.join(', ')}
 Target language: ${langName}
 Article type: ${articleType}${comment ? `\n\nAUTHOR'S INSTRUCTIONS:\n${comment}` : ''}
 
@@ -632,17 +633,23 @@ Do not add any content, just the title.`;
 
       case 'intro':
         {
-          // Scale intro proportionally: ~10% of target word count
-          const introTarget = Math.round(targetWordCount * 0.10);
-          const introMin = Math.max(120, introTarget - 30);
-          const introMax = introTarget + 40;
-          estimatedWords = introTarget;
-          blockTypeInstructions = `Write an engaging introduction (2-3 paragraphs).
-- Hook the reader immediately with a relatable scenario or question
-- Introduce the topic and its importance
-- Preview what the article will cover
-- Include the main keyword naturally
-- ${introMin}-${introMax} words — make it substantial, not a throwaway paragraph`;
+          estimatedWords = Math.round(targetWordCount * 0.12);
+          blockTypeInstructions = `Write the introduction for this article. The length and depth must match the article's scope and intent — do NOT apply a fixed word count. A simple how-to article might need one strong paragraph; a complex comparison or research-heavy topic may need three or four.
+
+Your goal: earn the reader's attention and make them want to read every section that follows.
+
+STRUCTURE (adapt to what the content actually needs):
+- HOOK: Open with something that immediately resonates — a relatable problem, a striking fact, a question the reader is already asking themselves
+- CONTEXT: Establish why this topic matters and what's at stake for the reader
+- SCOPE: Let the reader know what they will learn or be able to do after reading — without listing every section mechanically
+- BRIDGE: Close the intro in a way that naturally pulls the reader into the first section
+
+QUALITY RULES:
+- Include the main keyword naturally in the first paragraph
+- Write in pure prose — no bullet points, no subheadings
+- Every sentence must earn its place. Cut anything that doesn't add information or tension
+- Match the register of the article: technical topic = precise language; practical guide = direct and action-oriented; informational = clear and authoritative
+- Do NOT start with generic openers like 'In today's world...' or 'This article will explain...'`;
         }
         break;
 
@@ -650,8 +657,8 @@ Do not add any content, just the title.`;
       case 'h3':
         {
           // Calculate words per content block — same formula as analyzeStructures
-          // Reserve ~15% for intro+conclusion+faq, rest split among H2/H3 content blocks
-          const reservedWords = Math.round(targetWordCount * 0.15);
+          // Reserve ~28% for intro+conclusion+faq (intro ~12% + conclusion ~13% + faq fixed), rest split among H2/H3 content blocks
+          const reservedWords = Math.round(targetWordCount * 0.28);
           const targetContentBlocks = Math.max(5, Math.min(12, Math.ceil((targetWordCount - 400) / 220)));
           const wordsPerBlock = Math.round((targetWordCount - reservedWords) / targetContentBlocks);
           estimatedWords = Math.max(150, Math.min(350, wordsPerBlock));
@@ -668,28 +675,22 @@ ${hasFactsFromResearch ? '- MUST include the verified facts provided above, inte
 
       case 'conclusion':
         {
-          // Scale conclusion: ~12% of target word count for a substantive wrap-up
-          const concTarget = Math.round(targetWordCount * 0.12);
-          const concMin = Math.max(180, concTarget - 30);
-          const concMax = concTarget + 70;
-          estimatedWords = concTarget;
-          blockTypeInstructions = `Write a COMPREHENSIVE conclusion that wraps up the entire article. ${concMin}-${concMax} words.
+          estimatedWords = Math.round(targetWordCount * 0.13);
+          blockTypeInstructions = `Write the conclusion for this article. Think of every section of this article as a musical note — the conclusion is the chord where all those notes sound together and form a complete, resonant harmony. The reader must finish feeling they now hold the full picture, not just a list of things they read.
 
-WARNING: A conclusion of 2-3 sentences is UNACCEPTABLE. This must be a full, substantive paragraph (or two) that gives the reader a complete final picture. Aim for 6-10 sentences minimum.
+The length must reflect the article's actual complexity and intent. A focused how-to article may conclude in one strong paragraph. A deep comparison or research piece may need two or three paragraphs to do justice to every thread. Do NOT pad to fill space and do NOT cut short because it feels long enough.
 
-This conclusion must feel like a PROPER ENDING, not an abrupt stop. Structure:
+STRUCTURE (adapt proportionally to the article's depth):
+1. SYNTHESIS — not a mechanical summary. Weave the key insights together into a unified understanding. If the article covers multiple options, approaches, or aspects, show how they relate and what the overall picture means for the reader
+2. RESOLUTION — give the reader the decisive clarity they came for. What should they take away? What should they do or think differently? Reference specific points, data, or comparisons from the article — prove you absorbed the whole piece
+3. CLOSING — end with a sentence or two that lands with weight. A strong recommendation, a forward-looking thought, or a final perspective that puts a definitive full stop on the article
 
-1. SYNTHESIS (not just summary): Connect the key insights from all previous sections into a coherent final picture. If the article compares options/providers/products, briefly characterize each one (who it's best for, key strength) so the reader gets a clear decision framework.
-2. KEY TAKEAWAYS: Distill 3-5 concrete, actionable takeaways the reader should remember. These should be specific, not generic platitudes. Reference real data from the article (prices, features, criteria).
-3. FINAL PERSPECTIVE: End with a strong, memorable closing thought — a recommendation, a forward-looking statement, or a decisive opinion that puts a definitive period on the article.
-
-IMPORTANT:
-- Reference specific concepts, data, or examples from the article above — prove you've read the whole thing
-- If the article reviewed multiple options, the reader must leave knowing WHICH option fits WHICH need
-- Do NOT introduce completely new topics
-- Do NOT use generic filler like "In conclusion..." or "To summarize..."
-- Do NOT write a 2-sentence stub — this is the MOST IMPORTANT section for the reader's final impression
-- Make the reader feel they've gained clear, complete knowledge on this topic`;
+QUALITY RULES:
+- Write in pure prose — the conclusion is not a bullet-point recap
+- Every sentence must add final value — no restating what was already said verbatim
+- Do NOT open with 'In conclusion', 'To summarize', 'As we have seen' or any similar cliche
+- Do NOT introduce new topics or information that wasn't in the article
+- The reader must finish this section feeling complete — not like the article just stopped`;
         }
         break;
 
@@ -1802,11 +1803,11 @@ Return ONLY the JSON, no other text.`;
       typeInstructions = '\n7. COMMERCIAL ARTICLE: Keep pricing and commercial elements';
     }
 
-    // Build context summary from other blocks
+    // Build full article context from all other blocks (full content for complete picture)
     const contextSummary = allBlocks
       .filter(b => b.id !== targetBlock.id && b.content)
-      .map(b => `[${b.type.toUpperCase()}] ${b.heading}: ${b.content!.substring(0, 120).replace(/\n/g, ' ')}...`)
-      .join('\n');
+      .map(b => `[${b.type.toUpperCase()}] ${b.heading ? `## ${b.heading}\n` : ''}${b.content!}`)
+      .join('\n\n---\n\n');
 
     const systemPrompt = `You are a professional article editor. Rewrite ONLY the target block based on the user's instructions.
 
@@ -1817,7 +1818,7 @@ CRITICAL RULES:
 4. Write in ${langName}
 5. Return ONLY the rewritten content, no explanations or code blocks${styleInstructions}${typeInstructions}`;
 
-    const userPromptFull = `=== ARTICLE CONTEXT (other blocks for reference) ===
+    const userPromptFull = `=== FULL ARTICLE CONTEXT (all other blocks — read the complete article to understand its scope, tone, and content) ===
 ${contextSummary}
 
 === TARGET BLOCK TO EDIT ===

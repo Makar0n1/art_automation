@@ -22,6 +22,7 @@ import {
   Lock,
   Edit3,
   Shield,
+  Search,
 } from 'lucide-react';
 
 import {
@@ -36,7 +37,7 @@ import { apiKeysApi, authApi } from '@/lib/api';
 import { MaskedApiKeys } from '@/types';
 import { formatDate } from '@/lib/utils';
 
-type EditMode = 'openRouter' | 'supabase' | 'firecrawl' | null;
+type EditMode = 'openRouter' | 'supabase' | 'firecrawl' | 'google' | null;
 
 export default function SettingsPage() {
   const [maskedKeys, setMaskedKeys] = useState<MaskedApiKeys | null>(null);
@@ -46,6 +47,7 @@ export default function SettingsPage() {
     openRouter: false,
     supabase: false,
     firecrawl: false,
+    google: false,
   });
 
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
@@ -59,6 +61,7 @@ export default function SettingsPage() {
   const openRouterForm = useForm({ defaultValues: { apiKey: '' } });
   const supabaseForm = useForm({ defaultValues: { url: '', secretKey: '' } });
   const firecrawlForm = useForm({ defaultValues: { apiKey: '' } });
+  const googleForm = useForm({ defaultValues: { apiKey: '' } });
 
   const fetchMaskedKeys = async () => {
     try {
@@ -173,6 +176,7 @@ export default function SettingsPage() {
     openRouterForm.reset();
     supabaseForm.reset();
     firecrawlForm.reset();
+    googleForm.reset();
   };
 
   const saveOpenRouter = async (data: { apiKey: string }) => {
@@ -259,6 +263,36 @@ export default function SettingsPage() {
     setTestingKey('firecrawl');
     try {
       const response = await apiKeysApi.testFirecrawl();
+      if (response.success) toast.success(response.message || 'API key is valid');
+      else toast.error(response.error || 'Invalid API key');
+      fetchMaskedKeys();
+    } catch { toast.error('Test failed'); }
+    finally { setTestingKey(null); }
+  };
+
+  const saveGoogle = async (data: { apiKey: string }) => {
+    if (!data.apiKey) { toast.error('Please enter an API key'); return; }
+    try {
+      const response = await apiKeysApi.updateGoogle(data.apiKey, pinSessionToken || undefined);
+      if (response.success) {
+        toast.success('Google API key saved');
+        googleForm.reset(); setEditMode(null); fetchMaskedKeys();
+      } else { toast.error(response.error || 'Failed to save API key'); }
+    } catch (error) {
+      if (error instanceof AxiosError && error.response?.status === 403) {
+        setPinSessionToken(null);
+        localStorage.removeItem('pinSessionToken');
+        localStorage.removeItem('pinSessionTokenSetAt');
+        toast.error('PIN session expired. Please verify your PIN again.');
+        setEditMode(null);
+      } else { toast.error('Failed to save API key'); }
+    }
+  };
+
+  const testGoogle = async () => {
+    setTestingKey('google');
+    try {
+      const response = await apiKeysApi.testGoogle();
       if (response.success) toast.success(response.message || 'API key is valid');
       else toast.error(response.error || 'Invalid API key');
       fetchMaskedKeys();
@@ -557,6 +591,79 @@ export default function SettingsPage() {
               </div>
               <Button size="sm" variant="secondary" onClick={handleCancelEdit}>Cancel</Button>
               <Button size="sm" onClick={firecrawlForm.handleSubmit(saveFirecrawl)} disabled={firecrawlForm.formState.isSubmitting}>
+                Save
+              </Button>
+            </div>
+          </form>
+        )}
+      </Card>
+
+      {/* Google Knowledge Graph */}
+      <Card className="card-shine shrink-0 !p-4">
+        <div className="flex items-center gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/30">
+            <Search className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-gray-900 dark:text-white">Google Knowledge Graph</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">Auto LSI keywords</span>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <span className="font-mono text-gray-600 dark:text-gray-300">
+                {maskedKeys?.google?.isConfigured ? maskedKeys.google.maskedKey : '---'}
+              </span>
+              {maskedKeys?.google?.lastChecked && (
+                <span className="text-xs text-gray-400">
+                  tested {formatDate(maskedKeys.google.lastChecked)}
+                </span>
+              )}
+            </div>
+          </div>
+          {maskedKeys && (
+            <StatusBadge
+              isConfigured={maskedKeys.google?.isConfigured ?? false}
+              isValid={maskedKeys.google?.isValid ?? false}
+              lastChecked={maskedKeys.google?.lastChecked}
+            />
+          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={() => handleEditClick('google')} leftIcon={<Edit3 className="h-3.5 w-3.5" />}>
+              {maskedKeys?.google?.isConfigured ? 'Change' : 'Add'}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={testGoogle}
+              disabled={!maskedKeys?.google?.isConfigured || testingKey === 'google'}
+              leftIcon={testingKey === 'google' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+            >
+              Test
+            </Button>
+          </div>
+        </div>
+        {editMode === 'google' && (
+          <form onSubmit={googleForm.handleSubmit(saveGoogle)} className="mt-3 border-t border-gray-100/60 pt-3 dark:border-gray-700/30">
+            <div className="flex items-end gap-3">
+              <div className="relative flex-1">
+                <Input
+                  label="New API Key"
+                  type={showKeys.google ? 'text' : 'password'}
+                  placeholder="AIza..."
+                  {...googleForm.register('apiKey')}
+                  autoFocus
+                  className="pr-12"
+                />
+                <button
+                  type="button"
+                  className="absolute bottom-2 right-2 flex items-center justify-center text-gray-400 hover:text-gray-600"
+                  onClick={() => setShowKeys((s) => ({ ...s, google: !s.google }))}
+                >
+                  {showKeys.google ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              <Button size="sm" variant="secondary" onClick={handleCancelEdit}>Cancel</Button>
+              <Button size="sm" onClick={googleForm.handleSubmit(saveGoogle)} disabled={googleForm.formState.isSubmitting}>
                 Save
               </Button>
             </div>
