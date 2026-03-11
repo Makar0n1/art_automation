@@ -1551,27 +1551,33 @@ Empty array [] if perfect. ONLY JSON, no other text.`;
       })
       .join('\n');
 
-    const systemPrompt = `You are an expert ${langName} editor. The article is ${currentWordCount} words but must be max ${targetMaxWords} words. You need to remove ~${wordsToRemove} words total.
+    const maxPerBlockCut = 0.40; // Never cut more than 40% of a block's words in one pass
 
-Analyze each block and decide which blocks can be shortened WITHOUT losing quality. Prioritize cutting:
-1. Blocks with the most filler/padding/repetition
-2. Blocks that are disproportionately long compared to their importance
-3. Generic or less essential sections
+    const systemPrompt = `You are an expert ${langName} editor.
+
+TASK: Remove exactly ~${wordsToRemove} words from the article. Current: ${currentWordCount} words. Target max: ${targetMaxWords} words.
+
+CRITICAL CONSTRAINT: The SUM of all (currentWords - targetWords) across all blocks you select MUST equal approximately ${wordsToRemove}. Do NOT over-cut. If you cut 3 blocks, make sure the total reduction adds up to ~${wordsToRemove}, not 2x or 3x that number.
+
+PER-BLOCK CAP: No single block may be reduced by more than ${Math.round(maxPerBlockCut * 100)}% of its current word count. If a block is 200 words, the minimum targetWords is 120.
 
 ABSOLUTELY FORBIDDEN to trim:
 - Blocks marked with "⛔ CONTAINS LINK" — these have carefully inserted internal links that WILL BREAK if text is changed
 - Blocks marked with "⛔ PROTECTED" — introduction, conclusion and FAQ must never be trimmed; they are structurally critical
 
-PROTECT from heavy cutting:
+Prioritize cutting from:
+1. Blocks with the most filler/padding/repetition
+2. Blocks that are disproportionately long compared to their importance
+3. Generic or less essential sections
+
+PROTECT from cutting:
 - Blocks with specific data, statistics, or expert information
-- Blocks containing data from the author's instructions or verified research (prices, names, specifics the author provided)
+- Blocks containing data from the author's instructions or verified research
 
 Return a JSON array of blocks to trim:
 [{"blockId": <number>, "targetWords": <number>, "reason": "brief explanation"}]
 
-The sum of words removed must be approximately ${wordsToRemove}. Only include blocks that need trimming.
-NEVER include blocks that contain links.
-Return ONLY valid JSON.`;
+Only include blocks that need trimming. Return ONLY valid JSON.`;
 
     // Build facts info for trim context
     const factsInfo = verifiedFacts && verifiedFacts.length > 0
@@ -1585,8 +1591,18 @@ Return ONLY valid JSON.`;
       const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const parsed = JSON.parse(cleaned);
       if (Array.isArray(parsed)) {
-        // Hard filter: remove any blocks with links even if AI included them
-        return parsed.filter((p: { blockId: number }) => !blockIdsWithLinks.has(p.blockId));
+        // Hard filter: remove protected blocks even if AI included them
+        const filtered = parsed.filter((p: { blockId: number }) => !blockIdsWithLinks.has(p.blockId));
+
+        // Enforce per-block cap: targetWords must be >= 60% of current block word count
+        const blockWordMap = new Map(
+          blocks.filter(b => b.content).map(b => [b.id, b.content!.split(/\s+/).length])
+        );
+        return filtered.map((p: { blockId: number; targetWords: number; reason: string }) => {
+          const currentWords = blockWordMap.get(p.blockId) ?? 0;
+          const minAllowed = Math.round(currentWords * (1 - maxPerBlockCut));
+          return { ...p, targetWords: Math.max(p.targetWords, minAllowed, 50) };
+        });
       }
     } catch (error) {
       logger.error('Smart trim failed, falling back to empty', { error });
