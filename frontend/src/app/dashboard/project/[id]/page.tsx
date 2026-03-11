@@ -18,6 +18,7 @@ import {
   Rocket,
   FileText,
   Link as LinkIcon,
+  Atom,
 } from 'lucide-react';
 
 import {
@@ -318,13 +319,25 @@ export default function ProjectPage() {
             )}
           </div>
         </div>
-        <Button
-          size="sm"
-          leftIcon={<Rocket className="h-4 w-4" />}
-          onClick={() => setIsFormOpen(true)}
-        >
-          New Generation
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href={`/dashboard/v2/project/${project._id}`}>
+            <Button
+              size="sm"
+              variant="ghost"
+              leftIcon={<Atom className="h-4 w-4 text-violet-600" />}
+              className="border border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-700/40 dark:text-violet-400 dark:hover:bg-violet-900/20"
+            >
+              Generate 2.0
+            </Button>
+          </Link>
+          <Button
+            size="sm"
+            leftIcon={<Rocket className="h-4 w-4" />}
+            onClick={() => setIsFormOpen(true)}
+          >
+            New Generation
+          </Button>
+        </div>
       </div>
 
       {/* Generations List */}

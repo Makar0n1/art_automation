@@ -17,6 +17,7 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
+  Atom,
 } from 'lucide-react';
 
 import { useAuthStore } from '@/store/authStore';
@@ -26,6 +27,7 @@ import { cn } from '@/lib/utils';
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Projects', href: '/dashboard/projects', icon: FolderOpen },
+  { name: 'Generation 2.0', href: '/dashboard/v2', icon: Atom },
   { name: 'API Keys', href: '/dashboard/settings', icon: Settings },
   { name: 'Account', href: '/dashboard/account', icon: User },
 ];

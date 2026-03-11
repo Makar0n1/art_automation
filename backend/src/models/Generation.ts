@@ -13,6 +13,49 @@ import {
   LinkPosition,
 } from '../types/index.js';
 
+// ─── v2 Sub-schemas ───────────────────────────────────────────────────────────
+
+const EnrichedEntitySchema = new Schema({
+  name: { type: String, required: true },
+  types: [{ type: String }],
+  description: { type: String },
+  score: { type: Number, default: 0 },
+  source: { type: String, enum: ['google_kg', 'serp_derived'], default: 'google_kg' },
+  sourceConfidence: { type: Number, default: 0.9 },
+  confirmedBy: [{ type: String }],
+  aliases: [{ type: String }],
+  canonicalId: { type: String },
+  salience: { type: Number },
+  priority: { type: String, enum: ['critical', 'supporting', 'optional'] },
+}, { _id: false });
+
+const EntityClusterSchema = new Schema({
+  id: { type: Number, required: true },
+  label: { type: String, required: true },
+  entities: [EnrichedEntitySchema],
+  coherenceScore: { type: Number, default: 0 },
+  centroidEntityName: { type: String, default: '' },
+  dominantTypes: [{ type: String }],
+}, { _id: false });
+
+const IntentMapSchema = new Schema({
+  pageType: { type: String, default: '' },
+  primaryIntent: { type: String, default: '' },
+  hiddenIntents: [{ type: String }],
+  mustAnswerQuestions: [{ type: String }],
+  plannedCoverage: [{ type: String }],
+  funnelStage: { type: String, enum: ['awareness', 'consideration', 'decision'], default: 'consideration' },
+  heuristicConfidence: { type: String, enum: ['high', 'medium', 'low'], default: 'medium' },
+}, { _id: false });
+
+const EntityCoverageSchema = new Schema({
+  entityName: { type: String, required: true },
+  mentioned: { type: Boolean, default: false },
+  coverageLevel: { type: String, enum: ['exact', 'alias', 'not_found'], default: 'not_found' },
+  priority: { type: String, enum: ['critical', 'supporting', 'optional'], default: 'optional' },
+  stage: { type: String, enum: ['pre_review', 'post_review'], required: true },
+}, { _id: false });
+
 /**
  * Internal Link sub-schema
  * Configuration for each link to be inserted into the article
@@ -70,6 +113,11 @@ const GenerationConfigSchema = new Schema({
   minWords: { type: Number, default: 1200 },
   maxWords: { type: Number, default: 1800 },
   model: { type: String, default: 'openai/gpt-5.2', trim: true },
+  mode: { type: String, enum: ['v1', 'v2'], default: 'v1' },
+  // v2-only content directives
+  audience: { type: String, trim: true },
+  mustCover: [{ type: String, trim: true }],
+  mustAvoid: [{ type: String, trim: true }],
 }, { _id: false });
 
 /**
@@ -131,6 +179,11 @@ const ArticleBlockSchema = new Schema({
   answeredQuestions: [AnsweredQuestionSchema], // Questions with answers from Supabase
   content: { type: String }, // Generated content for this block
   contentHistory: [{ type: String }], // Version history: max 2 entries [original, previous]
+  // v2 fields
+  primaryClusterIndex: { type: Number, default: null },
+  secondaryClusterIndex: { type: Number, default: null },
+  targetOutcome: { type: String },
+  evidenceDefault: { type: String },
 }, { _id: false });
 
 /**
@@ -199,6 +252,31 @@ const GenerationSchema = new Schema<IGeneration>(
     kgEntities: {
       type: [String],
       default: [],
+    },
+    // v2: Article Generation 2.0 fields
+    entityClusters: {
+      type: [EntityClusterSchema],
+      default: [],
+    },
+    intentMap: {
+      type: IntentMapSchema,
+    },
+    preReviewEntityCoverage: {
+      type: [EntityCoverageSchema],
+      default: [],
+    },
+    entityCoverage: {
+      type: [EntityCoverageSchema],
+      default: [],
+    },
+    qualityScores: {
+      type: new Schema({
+        entityCoveragePercent: { type: Number, default: 0 },
+        criticalEntitiesMissed: { type: Number, default: 0 },
+        intentPlannedPercent: { type: Number, default: 0 },
+        intentRealizedPercent: { type: Number, default: 0 },
+        unsupportedHardClaims: { type: Number, default: 0 },
+      }, { _id: false }),
     },
     // Article blocks for chunked generation
     articleBlocks: {

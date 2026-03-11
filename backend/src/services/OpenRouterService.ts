@@ -6,6 +6,14 @@
 
 import axios, { AxiosInstance } from 'axios';
 import { logger } from '../utils/logger.js';
+import type {
+  SerpResult,
+  EnrichedEntity,
+  EntityCluster,
+  IntentMap,
+  EntityCoverage,
+  ArticleBlock as IArticleBlock,
+} from '../types/index.js';
 
 /**
  * OpenRouter API response structure
@@ -1955,6 +1963,284 @@ Return ONLY the JSON, no other text.`;
       logger.error('Failed to edit SEO metadata', { error });
       throw error;
     }
+  }
+
+  // ─── Article Generation 2.0 Methods ──────────────────────────────────────────
+
+  /**
+   * Resolve intent map for v2 pipeline.
+   * Heuristic-first: derives pageType/funnelStage/mustAnswerQuestions from SERP deterministically,
+   * then AI refines hiddenIntents and normalizes questions.
+   */
+  async resolveIntentMap(
+    mainKeyword: string,
+    language: string,
+    serpResults: SerpResult[],
+    articleType: string
+  ): Promise<IntentMap> {
+    // 1. Heuristic baseline
+    const funnelStageMap: Record<string, IntentMap['funnelStage']> = {
+      commercial: 'decision', transactional: 'decision',
+      review: 'decision', comparison: 'decision',
+      informational: 'consideration', howto: 'consideration',
+      listicle: 'consideration', navigational: 'awareness',
+    };
+    const funnelStage = funnelStageMap[articleType] ?? 'consideration';
+    const heuristicConfidence: IntentMap['heuristicConfidence'] = serpResults.length >= 5 ? 'high' : 'medium';
+
+    // Extract question-like patterns from SERP titles/snippets
+    const serpText = serpResults.slice(0, 5)
+      .map(r => `${r.title} ${r.content?.slice(0, 200) ?? ''}`)
+      .join(' ');
+    const questionMatches = serpText.match(/[A-Z][^.!?]*\?/g) ?? [];
+    const heuristicQuestions = [...new Set(questionMatches.map(q => q.trim()))].slice(0, 5);
+
+    // 2. AI refinement — adds hiddenIntents + normalizes mustAnswerQuestions
+    const serpSnippets = serpResults.slice(0, 5)
+      .map((r, i) => `${i + 1}. "${r.title}" — ${r.content?.slice(0, 200) ?? ''}`)
+      .join('\n');
+
+    const systemPrompt = `You are an expert SEO strategist specializing in user intent analysis.
+Return ONLY valid JSON. No explanations.`;
+
+    const userPrompt = `Keyword: "${mainKeyword}"
+Language: ${language}
+Article type: ${articleType}
+Funnel stage: ${funnelStage} (FIXED — do not change)
+
+Top SERP snippets:
+${serpSnippets}
+
+Heuristic questions already found:
+${heuristicQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n') || 'None'}
+
+Task:
+1. Set primaryIntent (1 sentence: what does the user want)
+2. Add hiddenIntents (array of strings: unstated user sub-goals like cost, legality, risks, comparisons, how to choose)
+3. Normalize and deduplicate mustAnswerQuestions (combine heuristic + new ones, max 8 total, each must end with ?)
+
+Return JSON:
+{
+  "primaryIntent": "...",
+  "hiddenIntents": ["...", "..."],
+  "mustAnswerQuestions": ["...?", "...?"]
+}`;
+
+    try {
+      const raw = await this.chat(systemPrompt, userPrompt, 0.3);
+      const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const parsed = JSON.parse(cleaned) as { primaryIntent: string; hiddenIntents: string[]; mustAnswerQuestions: string[] };
+
+      return {
+        pageType: articleType,
+        primaryIntent: parsed.primaryIntent ?? mainKeyword,
+        hiddenIntents: Array.isArray(parsed.hiddenIntents) ? parsed.hiddenIntents : [],
+        mustAnswerQuestions: Array.isArray(parsed.mustAnswerQuestions)
+          ? parsed.mustAnswerQuestions.filter((q: string) => q.endsWith('?'))
+          : heuristicQuestions,
+        plannedCoverage: [],  // Filled in during structure mapping
+        funnelStage,
+        heuristicConfidence,
+      };
+    } catch (err) {
+      logger.warn('resolveIntentMap: AI refinement failed, using heuristic fallback', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        pageType: articleType,
+        primaryIntent: mainKeyword,
+        hiddenIntents: [],
+        mustAnswerQuestions: heuristicQuestions,
+        plannedCoverage: [],
+        funnelStage,
+        heuristicConfidence: 'low',
+      };
+    }
+  }
+
+  /**
+   * Map entity clusters to article structure (v2).
+   * Intent-first ordering: blocks that answer high-priority user concerns come first.
+   * Each block gets primaryClusterIndex and optional secondaryClusterIndex.
+   * Returns blocks enriched with targetOutcome and plannedCoverage in intentMap.
+   */
+  async mapToStructureV2(
+    mainKeyword: string,
+    intentMap: IntentMap,
+    entityClusters: EntityCluster[],
+    language: string,
+    articleType: string,
+    minWords: number,
+    maxWords: number,
+    comment?: string
+  ): Promise<{ blocks: IArticleBlock[]; plannedCoverage: Record<string, string> }> {
+    const clusterList = entityClusters.map((c, i) =>
+      `Cluster ${i} "${c.label}" [types: ${c.dominantTypes.slice(0, 2).join(', ')}]: ${c.entities.slice(0, 4).map(e => e.name).join(', ')}`
+    ).join('\n');
+
+    const targetH2Count = maxWords < 1200 ? 3 : maxWords < 2200 ? 5 : 7;
+
+    const systemPrompt = `You are an expert SEO content architect. Build article structure around entity clusters and user intent.
+RULES:
+- Order blocks by user decision journey, NOT alphabetically or encyclopedically
+- Blocks that answer high-priority concerns (cost, legality, risks) come BEFORE descriptive blocks
+- Each H2/H3 must solve ONE user sub-intent
+- Opening answer rule: intro MUST answer the primaryIntent in the first 2-3 sentences
+- Assign primaryClusterIndex (required) and secondaryClusterIndex (optional, null if none)
+- Include a targetOutcome: what the reader knows after this block
+- Return ONLY valid JSON`;
+
+    const userPrompt = `Keyword: "${mainKeyword}"
+Language: ${language}
+Article type: ${articleType}
+Word count target: ${minWords}–${maxWords} words
+Primary intent: "${intentMap.primaryIntent}"
+Hidden intents: ${intentMap.hiddenIntents.join(', ') || 'none'}
+Must-answer questions: ${intentMap.mustAnswerQuestions.slice(0, 6).join(' | ') || 'none'}
+${comment ? `Author instructions: ${comment}` : ''}
+
+Entity clusters available:
+${clusterList || 'No clusters'}
+
+Create: H1, intro, ${targetH2Count} H2/H3 blocks covering clusters, conclusion, FAQ.
+For plannedCoverage, map each must-answer question to the block heading that answers it.
+
+Return JSON:
+{
+  "blocks": [
+    {"type": "h1", "heading": "...", "primaryClusterIndex": null, "secondaryClusterIndex": null, "targetOutcome": ""},
+    {"type": "intro", "heading": "", "primaryClusterIndex": null, "secondaryClusterIndex": null, "targetOutcome": "Quick direct answer to primary intent"},
+    {"type": "h2", "heading": "...", "primaryClusterIndex": 0, "secondaryClusterIndex": null, "targetOutcome": "..."},
+    {"type": "conclusion", "heading": "...", "primaryClusterIndex": null, "secondaryClusterIndex": null, "targetOutcome": ""},
+    {"type": "faq", "heading": "FAQ", "primaryClusterIndex": null, "secondaryClusterIndex": null, "targetOutcome": ""}
+  ],
+  "plannedCoverage": {"question text?": "H2: block heading"}
+}`;
+
+    const raw = await this.chat(systemPrompt, userPrompt, 0.4);
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    let parsed: { blocks: Array<Record<string, unknown>>; plannedCoverage: Record<string, string> };
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      // Try extracting JSON from response
+      const match = cleaned.match(/\{[\s\S]+\}/);
+      if (!match) throw new Error('mapToStructureV2: no JSON found in response');
+      parsed = JSON.parse(match[0]);
+    }
+
+    const VALID_TYPES = new Set(['h1', 'intro', 'h2', 'h3', 'conclusion', 'faq']);
+    const blocks: IArticleBlock[] = (parsed.blocks ?? [])
+      .filter((b: Record<string, unknown>) => VALID_TYPES.has(b.type as string) && b.heading !== undefined)
+      .map((b: Record<string, unknown>, idx: number) => ({
+        id: idx + 1,
+        type: b.type as IArticleBlock['type'],
+        heading: (b.heading as string) ?? '',
+        instruction: (b.targetOutcome as string) ?? '',
+        lsi: [],
+        primaryClusterIndex: (b.primaryClusterIndex as number | null) ?? null,
+        secondaryClusterIndex: (b.secondaryClusterIndex as number | null) ?? null,
+        targetOutcome: (b.targetOutcome as string) ?? '',
+        evidenceDefault: '',  // Set by pipeline using getEvidenceDefault()
+      }));
+
+    return {
+      blocks,
+      plannedCoverage: parsed.plannedCoverage ?? {},
+    };
+  }
+
+  /**
+   * Generate an entity-aware content block (v2).
+   * Required entities (critical, max 3) must be integrated organically.
+   * Preferred entities (supporting, max 4) only if they help readability.
+   * Evidence type guided by evidenceDefault (rule-based from pipeline).
+   */
+  async generateEntityAwareBlock(
+    block: IArticleBlock & {
+      requiredEntities: EnrichedEntity[];
+      preferredEntities: EnrichedEntity[];
+      evidenceDefault: string;
+    },
+    accumulatedContent: string,
+    mainKeyword: string,
+    language: string,
+    targetWordCount: number,
+    articleType: string,
+    comment?: string
+  ): Promise<string> {
+    const requiredList = block.requiredEntities
+      .map(e => `• ${e.name}${e.description ? ` — ${e.description.slice(0, 80)}` : ''}`)
+      .join('\n');
+
+    const preferredList = block.preferredEntities
+      .map(e => `• ${e.name}${e.description ? ` — ${e.description.slice(0, 60)}` : ''}`)
+      .join('\n');
+
+    const verifiedFacts = block.answeredQuestions
+      ?.filter(aq => aq.similarity > 0.7)
+      .map(aq => `• ${aq.question} → ${aq.answer.slice(0, 150)}`)
+      .join('\n') ?? '';
+
+    const systemPrompt = `You are an expert content writer creating authoritative, helpful articles.
+Write in ${language}. Target ~${targetWordCount} words for this section.
+
+ENTITY INTEGRATION RULES:
+- REQUIRED entities (2-3): Integrate organically — explain through meaning, never list mechanically
+- PREFERRED entities (3-4): Use only if they genuinely help; skip if they hurt readability
+- Do NOT create artificial entity connection phrases
+- Do NOT enumerate entities as a list within flowing prose
+
+EVIDENCE REQUIREMENT: ${block.evidenceDefault}
+
+CONTENT QUALITY:
+- Each paragraph delivers CONCRETE VALUE: a fact, insight, or recommendation
+- The reader must LEARN something specific or get a clear takeaway
+- Avoid restating the heading in different words
+${comment ? `\nAUTHOR INSTRUCTIONS (follow these): ${comment}` : ''}`;
+
+    const userPrompt = `Article keyword: "${mainKeyword}"
+Section: "${block.heading}"
+Target outcome: ${block.targetOutcome ?? 'Cover this topic thoroughly'}
+Article type: ${articleType}
+
+REQUIRED ENTITIES (integrate all — critical for topic coverage):
+${requiredList || 'None'}
+
+PREFERRED ENTITIES (use if helpful):
+${preferredList || 'None'}
+
+${verifiedFacts ? `VERIFIED FACTS (use these in your writing — they are real research data):\n${verifiedFacts}\n` : ''}
+${accumulatedContent ? `CONTEXT (preceding content — do not repeat):\n${accumulatedContent.slice(-800)}\n` : ''}
+Write the section content now (no heading, just body text):`;
+
+    return this.chat(systemPrompt, userPrompt, 0.7);
+  }
+
+  /**
+   * Check entity coverage in article text (v2 MVP — exact + alias match).
+   * Runs synchronously. Advanced NLP normalization deferred to v2.1.
+   */
+  checkEntityCoverage(
+    article: string,
+    entities: EnrichedEntity[],
+    stage: 'pre_review' | 'post_review'
+  ): EntityCoverage[] {
+    const articleLower = article.toLowerCase();
+    return entities.map(entity => {
+      const exactMatch = articleLower.includes(entity.name.toLowerCase());
+      const aliasMatch = !exactMatch &&
+        (entity.aliases?.some(a => articleLower.includes(a.toLowerCase())) ?? false);
+      const mentioned = exactMatch || aliasMatch;
+      return {
+        entityName: entity.name,
+        mentioned,
+        coverageLevel: exactMatch ? 'exact' : aliasMatch ? 'alias' : 'not_found',
+        priority: entity.priority ?? 'optional',
+        stage,
+      } satisfies EntityCoverage;
+    });
   }
 
 }

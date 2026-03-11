@@ -106,6 +106,13 @@ export class SupabaseService {
   }
 
   /**
+   * Public wrapper for generating embeddings — used by EntityClusteringService
+   */
+  async getEmbedding(text: string): Promise<number[]> {
+    return this.generateEmbedding(text);
+  }
+
+  /**
    * Generate embedding for text using OpenAI via OpenRouter
    */
   private async generateEmbedding(text: string): Promise<number[]> {

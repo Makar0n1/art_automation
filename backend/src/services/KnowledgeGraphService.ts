@@ -6,6 +6,7 @@
 
 import axios from 'axios';
 import { logger } from '../utils/logger.js';
+import { EnrichedEntity } from '../types/index.js';
 
 const KG_API_URL = 'https://kgsearch.googleapis.com/v1/entities:search';
 
@@ -39,9 +40,27 @@ export class KnowledgeGraphService {
       timeout: 8000,
     });
 
+    // Types that indicate entertainment/geography noise — not useful as LSI for articles
+    const BLOCKED_TYPES = new Set([
+      'Film', 'Movie', 'TVSeries', 'TVEpisode', 'TVSeason', 'TVClip',
+      'MusicRecording', 'MusicAlbum', 'MusicGroup', 'MusicEvent',
+      'VideoGame', 'VideoGameSeries',
+      'SportsTeam', 'SportsOrganization', 'SportsEvent',
+      'City', 'Country', 'State', 'AdministrativeArea', 'Place', 'LandmarksOrHistoricalBuildings',
+      'Person',
+    ]);
+
     const items = response.data?.itemListElement || [];
     return items
-      .filter((item: Record<string, unknown>) => item.result && (item.result as Record<string, unknown>).name)
+      .filter((item: Record<string, unknown>) => {
+        if (!item.result || !(item.result as Record<string, unknown>).name) return false;
+        const result = item.result as Record<string, unknown>;
+        const types = (result['@type'] as string[] | undefined) || [];
+        // Block if ALL non-Thing types are in the blocked list
+        const meaningfulTypes = types.filter((t: string) => t !== 'Thing');
+        if (meaningfulTypes.length > 0 && meaningfulTypes.every((t: string) => BLOCKED_TYPES.has(t))) return false;
+        return true;
+      })
       .map((item: Record<string, unknown>) => {
         const result = item.result as Record<string, unknown>;
         const types = (result['@type'] as string[] | undefined) || [];
@@ -52,6 +71,93 @@ export class KnowledgeGraphService {
           score: (item.resultScore as number) || 0,
         };
       });
+  }
+
+  /**
+   * Get enriched entity objects for v2 pipeline.
+   * Returns full objects with types, descriptions, sourceConfidence, etc.
+   * On any error, logs and returns empty array (non-blocking).
+   * Emits KG_SPARSE warning if fewer than 5 entities found.
+   */
+  async getEnrichedEntities(keywords: string[]): Promise<EnrichedEntity[]> {
+    if (!keywords.length) return [];
+
+    const seen = new Set<string>();
+    const allRaw: Array<{ name: string; types: string[]; description?: string; score: number; canonicalId?: string }> = [];
+
+    for (let i = 0; i < keywords.length; i++) {
+      const query = keywords[i].trim();
+      if (!query) continue;
+      const limit = i === 0 ? 30 : 15;
+      try {
+        const response = await axios.get(KG_API_URL, {
+          params: { query, key: this.apiKey, limit },
+          timeout: 8000,
+        });
+
+        const BLOCKED_TYPES = new Set([
+          'Film', 'Movie', 'TVSeries', 'TVEpisode', 'TVSeason', 'TVClip',
+          'MusicRecording', 'MusicAlbum', 'MusicGroup', 'MusicEvent',
+          'VideoGame', 'VideoGameSeries',
+          'SportsTeam', 'SportsOrganization', 'SportsEvent',
+          'City', 'Country', 'State', 'AdministrativeArea', 'Place', 'LandmarksOrHistoricalBuildings',
+          'Person',
+        ]);
+
+        const items = response.data?.itemListElement || [];
+        for (const item of items as Record<string, unknown>[]) {
+          if (!item.result) continue;
+          const result = item.result as Record<string, unknown>;
+          if (!result.name) continue;
+          const types = (result['@type'] as string[] | undefined) || [];
+          const meaningfulTypes = types.filter((t: string) => t !== 'Thing');
+          if (meaningfulTypes.length > 0 && meaningfulTypes.every((t: string) => BLOCKED_TYPES.has(t))) continue;
+
+          const name = result.name as string;
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+
+          allRaw.push({
+            name,
+            types: meaningfulTypes,
+            description: (result.description as string | undefined) || undefined,
+            score: (item.resultScore as number) || 0,
+            canonicalId: (result['@id'] as string | undefined) || undefined,
+          });
+        }
+      } catch (error) {
+        logger.warn(`KG enriched entity fetch failed for keyword '${query}'`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Compute salience = score / maxScore
+    const maxScore = allRaw.reduce((m, e) => Math.max(m, e.score), 0) || 1;
+
+    const entities: EnrichedEntity[] = allRaw
+      .sort((a, b) => b.score - a.score)
+      .map(e => ({
+        name: e.name,
+        types: e.types,
+        description: e.description,
+        score: e.score,
+        source: 'google_kg' as const,
+        sourceConfidence: 0.9,
+        confirmedBy: ['google_kg' as const],
+        canonicalId: e.canonicalId,
+        salience: e.score / maxScore,
+      }));
+
+    if (entities.length < 5) {
+      logger.warn('KG_SPARSE: fewer than 5 entities found — SERP-derived weight should be elevated', {
+        found: entities.length,
+        keywords,
+      });
+    }
+
+    return entities;
   }
 
   /**
@@ -66,33 +172,12 @@ export class KnowledgeGraphService {
     const seen = new Set<string>();
     const allEntities: KnowledgeGraphEntity[] = [];
 
-    // Expand compound keywords into individual words for better KG coverage
-    // e.g. 'ghostwriter bachelorarbeit' → ['ghostwriter bachelorarbeit', 'ghostwriter', 'bachelorarbeit']
-    const expandedKeywords: Array<{ query: string; isMain: boolean }> = [];
+    // Query each keyword as-is (no word splitting — compound phrases are more precise)
+    // First keyword = main keyword (more results), rest = additional keywords
     for (let i = 0; i < keywords.length; i++) {
-      const kw = keywords[i];
-      expandedKeywords.push({ query: kw, isMain: i === 0 });
-      const words = kw.trim().split(/\s+/);
-      if (words.length > 1) {
-        for (const word of words) {
-          if (word.length > 3) {
-            expandedKeywords.push({ query: word, isMain: false });
-          }
-        }
-      }
-    }
-
-    // Deduplicate queries
-    const seenQueries = new Set<string>();
-    const uniqueQueries = expandedKeywords.filter(({ query }) => {
-      const key = query.toLowerCase();
-      if (seenQueries.has(key)) return false;
-      seenQueries.add(key);
-      return true;
-    });
-
-    for (const { query, isMain } of uniqueQueries) {
-      const limit = isMain ? 15 : 8;
+      const query = keywords[i].trim();
+      if (!query) continue;
+      const limit = i === 0 ? 15 : 8;
       try {
         const entities = await this.fetchEntitiesForKeyword(query, limit);
         for (const entity of entities) {

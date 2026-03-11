@@ -114,6 +114,7 @@ export interface GenerationConfig {
   language: string;
   region: string;
   lsiKeywords: string[];
+  mode?: 'v1' | 'v2';
   comment?: string;
   internalLinks: InternalLink[];
   linksAsList: boolean;
@@ -121,6 +122,10 @@ export interface GenerationConfig {
   minWords?: number;
   maxWords?: number;
   model?: string;
+  // v2-only content directives
+  audience?: string;
+  mustCover?: string[];
+  mustAvoid?: string[];
 }
 
 export interface GenerationLog {
@@ -160,6 +165,62 @@ export interface ArticleBlock {
   answeredQuestions?: AnsweredQuestion[];
   content?: string;
   contentHistory?: string[];
+  // v2 fields
+  primaryClusterIndex?: number | null;
+  secondaryClusterIndex?: number | null;
+  targetOutcome?: string;
+  evidenceDefault?: string;
+}
+
+// ─── Article Generation 2.0 Types ────────────────────────────────────────────
+
+export interface EnrichedEntity {
+  name: string;
+  types: string[];
+  description?: string;
+  score: number;
+  source: 'google_kg' | 'serp_derived';
+  sourceConfidence: number;
+  confirmedBy: Array<'google_kg' | 'serp_derived'>;
+  aliases?: string[];
+  canonicalId?: string;
+  salience?: number;
+  priority?: 'critical' | 'supporting' | 'optional';
+}
+
+export interface EntityCluster {
+  id: number;
+  label: string;
+  entities: EnrichedEntity[];
+  coherenceScore: number;
+  centroidEntityName: string;
+  dominantTypes: string[];
+}
+
+export interface IntentMap {
+  pageType: string;
+  primaryIntent: string;
+  hiddenIntents: string[];
+  mustAnswerQuestions: string[];
+  plannedCoverage: string[];
+  funnelStage: 'awareness' | 'consideration' | 'decision';
+  heuristicConfidence: 'high' | 'medium' | 'low';
+}
+
+export interface EntityCoverage {
+  entityName: string;
+  mentioned: boolean;
+  coverageLevel: 'exact' | 'alias' | 'not_found';
+  priority: 'critical' | 'supporting' | 'optional';
+  stage: 'pre_review' | 'post_review';
+}
+
+export interface GenerationQualityScores {
+  entityCoveragePercent: number;
+  criticalEntitiesMissed: number;
+  intentPlannedPercent: number;
+  intentRealizedPercent: number;
+  unsupportedHardClaims: number;
 }
 
 export interface StructureAnalysis {
@@ -182,6 +243,12 @@ export interface Generation {
   serpResults: SerpResult[];
   // Knowledge Graph LSI entities (step 1.5)
   kgEntities?: string[];
+  // v2: Article Generation 2.0 fields
+  entityClusters?: EntityCluster[];
+  intentMap?: IntentMap;
+  preReviewEntityCoverage?: EntityCoverage[];
+  entityCoverage?: EntityCoverage[];
+  qualityScores?: GenerationQualityScores;
   // Structure analysis
   structureAnalysis?: StructureAnalysis;
   articleBlocks?: ArticleBlock[];

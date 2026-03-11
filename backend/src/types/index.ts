@@ -142,6 +142,79 @@ export interface GenerationConfig {
   minWords?: number;  // default 1200
   maxWords?: number;  // default 1800
   model?: string;     // OpenRouter model ID, default 'openai/gpt-5.2'
+  mode?: 'v1' | 'v2'; // default 'v1'; 'v2' = Entity + Intent + Evidence pipeline
+  // v2-only: audience context and content directives (stored separately, merged into prompts)
+  audience?: string;       // e.g. "Studierende in Deutschland", max 120 chars
+  mustCover?: string[];    // Topics/aspects that must be addressed, max 8 items
+  mustAvoid?: string[];    // Claims/phrases to never include, max 8 items
+}
+
+// ─── Article Generation 2.0 Types ────────────────────────────────────────────
+
+/**
+ * Enriched entity from KG or SERP-derived terms
+ * serp_derived = regex candidates from titles/snippets (lower confidence, NOT named entities)
+ */
+export interface EnrichedEntity {
+  name: string;
+  types: string[];
+  description?: string;
+  score: number;
+  source: 'google_kg' | 'serp_derived'; // 'internal' deferred to v2.1
+  sourceConfidence: number;             // 0-1: google_kg≈0.9, serp_derived≈0.4-0.6
+  confirmedBy: Array<'google_kg' | 'serp_derived'>; // both = cross-confirmed
+  aliases?: string[];
+  canonicalId?: string;   // KG result['@id'] e.g. /m/xxx
+  salience?: number;      // score / maxScore in result set, 0-1
+  priority?: 'critical' | 'supporting' | 'optional'; // assigned during clustering
+}
+
+/**
+ * Semantic cluster of related entities
+ */
+export interface EntityCluster {
+  id: number;
+  label: string;             // Name of centroid entity
+  entities: EnrichedEntity[];
+  coherenceScore: number;    // Avg pairwise cosine similarity within cluster
+  centroidEntityName: string;
+  dominantTypes: string[];   // Most frequent schema.org types in cluster
+}
+
+/**
+ * Intent map — heuristic baseline refined by AI
+ */
+export interface IntentMap {
+  pageType: string;
+  primaryIntent: string;
+  hiddenIntents: string[];        // Cost, legality, risks, comparisons, etc.
+  mustAnswerQuestions: string[];  // Questions that MUST be answered in the article
+  plannedCoverage: string[];      // Block headings assigned to mustAnswerQuestions
+  funnelStage: 'awareness' | 'consideration' | 'decision';
+  heuristicConfidence: 'high' | 'medium' | 'low';
+}
+
+/**
+ * Entity coverage check result — computed pre and post review/trim
+ */
+export interface EntityCoverage {
+  entityName: string;
+  mentioned: boolean;
+  coverageLevel: 'exact' | 'alias' | 'not_found';
+  priority: 'critical' | 'supporting' | 'optional';
+  stage: 'pre_review' | 'post_review';
+}
+
+/**
+ * Quality scores computed after generation (v2 only)
+ * entityCoveragePercent is a QA metric — NOT the north star goal
+ */
+export interface GenerationQualityScores {
+  entityCoveragePercent: number;    // % of all entities mentioned
+  criticalEntitiesMissed: number;   // count of critical-priority entities not found
+  intentPlannedPercent: number;     // % of mustAnswerQuestions with assigned block
+  intentRealizedPercent: number;    // % of mustAnswerQuestions answered in final text (heuristic)
+  unsupportedHardClaims: number;    // numbers/legal/tools without retrieval backing
 }
 
 /**
@@ -172,6 +245,11 @@ export interface ArticleBlock {
   answeredQuestions?: AnsweredQuestion[]; // Questions with answers from Supabase
   content?: string; // Generated content for this block
   contentHistory?: string[]; // Version history: max 2 entries [original, previous]
+  // v2 fields
+  primaryClusterIndex?: number | null;   // Index into generation.entityClusters
+  secondaryClusterIndex?: number | null; // Optional secondary cluster
+  targetOutcome?: string;                // What the reader learns/understands after this block
+  evidenceDefault?: string;             // Rule-based evidence type hint for writing
 }
 
 /**
@@ -218,6 +296,12 @@ export interface IGeneration extends Document {
   structureAnalysis?: StructureAnalysis;
   articleBlocks?: ArticleBlock[];
   averageWordCount?: number;
+  // v2: Article Generation 2.0 fields
+  entityClusters?: EntityCluster[];
+  intentMap?: IntentMap;
+  preReviewEntityCoverage?: EntityCoverage[];  // Coverage snapshot before review/trim
+  entityCoverage?: EntityCoverage[];           // Final coverage after review/trim
+  qualityScores?: GenerationQualityScores;
   // Final output
   generatedArticle?: string;
   article?: string; // Full article in markdown format

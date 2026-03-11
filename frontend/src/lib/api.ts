@@ -235,6 +235,10 @@ export const generationsApi = {
     minWords?: number;
     maxWords?: number;
     model?: string;
+    mode?: 'v1' | 'v2';
+    audience?: string;
+    mustCover?: string[];
+    mustAvoid?: string[];
   }) => {
     const response = await api.post<ApiResponse>(`/projects/${projectId}/generations`, config);
     return response.data;
