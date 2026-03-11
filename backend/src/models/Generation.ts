@@ -195,6 +195,11 @@ const GenerationSchema = new Schema<IGeneration>(
     structureAnalysis: {
       type: StructureAnalysisSchema,
     },
+    // Knowledge Graph LSI entities (step 1.5)
+    kgEntities: {
+      type: [String],
+      default: [],
+    },
     // Article blocks for chunked generation
     articleBlocks: {
       type: [ArticleBlockSchema],

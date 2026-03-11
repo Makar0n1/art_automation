@@ -212,6 +212,8 @@ export interface IGeneration extends Document {
   currentStep: string;
   logs: GenerationLog[];
   serpResults: SerpResult[];
+  // Knowledge Graph LSI entities fetched at step 1.5
+  kgEntities?: string[];
   // Structure analysis results
   structureAnalysis?: StructureAnalysis;
   articleBlocks?: ArticleBlock[];

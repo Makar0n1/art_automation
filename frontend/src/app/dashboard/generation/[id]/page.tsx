@@ -27,6 +27,7 @@ import {
   Maximize2,
   Sparkles,
   DollarSign,
+  Network,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ReactMarkdown from 'react-markdown';
@@ -135,6 +136,7 @@ export default function GenerationPage() {
   const [editingBlock, setEditingBlock] = useState<ArticleBlock | null>(null);
   const [isSeoEditOpen, setIsSeoEditOpen] = useState(false);
   const [isCostOpen, setIsCostOpen] = useState(false);
+  const [isKgExpanded, setIsKgExpanded] = useState(true);
   const [editingBlockIds, setEditingBlockIds] = useState<Set<number>>(new Set());
   const [animatingBlocks, setAnimatingBlocks] = useState<Map<number, { oldContent: string }>>(new Map());
   const [seoAnimating, setSeoAnimating] = useState(false);
@@ -687,42 +689,97 @@ export default function GenerationPage() {
                     </span>
                   </span>
                 </div>
-                <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-1.5">
-                  <div className="space-y-0.5">
+                <div className="flex-1 overflow-y-auto overflow-x-hidden">
+
+                  {/* KG Entities section */}
+                  {generation?.kgEntities && generation.kgEntities.length > 0 && (
+                    <div className="border-b border-gray-100/60 dark:border-gray-700/30">
+                      <button
+                        type="button"
+                        onClick={() => setIsKgExpanded(p => !p)}
+                        className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <Network className="h-3 w-3 text-violet-500" />
+                          <span className="text-[10px] font-semibold text-violet-600 dark:text-violet-400">
+                            KG Entities
+                          </span>
+                          <span className="text-[10px] text-gray-400">({generation.kgEntities.length})</span>
+                        </div>
+                        {isKgExpanded
+                          ? <ChevronUp className="h-3 w-3 text-gray-400" />
+                          : <ChevronDown className="h-3 w-3 text-gray-400" />
+                        }
+                      </button>
+                      {isKgExpanded && (
+                        <div className="px-3 pb-2 flex flex-wrap gap-1">
+                          {generation.kgEntities.map((entity, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center rounded-full bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:ring-violet-700/40"
+                            >
+                              {entity}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Block list */}
+                  <div className="px-2 py-1.5 space-y-0.5">
                     {blocks.map(block => {
                       const done      = !!block.content;
                       const isCurrent = block.id === currentBlockId;
+                      const kgSet = new Set((generation?.kgEntities || []).map(e => e.toLowerCase()));
+                      const blockKgLsi = (block.lsi || []).filter(k => kgSet.has(k.toLowerCase()));
+                      const blockUserLsi = (block.lsi || []).filter(k => !kgSet.has(k.toLowerCase()));
                       return (
-                        <button
-                          key={block.id}
-                          id={`structure-block-${block.id}`}
-                          type="button"
-                          onClick={() => done && scrollToBlock(block.id)}
-                          disabled={!done}
-                          className={cn(
-                            'w-full rounded-md px-2 py-1 text-left text-[11px] transition-all',
-                            block.type === 'h3' && 'pl-5',
-                            done && 'cursor-pointer hover:bg-gray-100/80 dark:hover:bg-gray-700/40',
-                            !done && !isCurrent && 'opacity-50',
-                            isCurrent && 'bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-900/20 dark:ring-blue-700',
-                          )}
-                        >
-                          <div className="flex items-center gap-1 min-w-0">
-                            {done ? (
-                              <Check className="h-2.5 w-2.5 shrink-0 text-emerald-500" />
-                            ) : isCurrent ? (
-                              <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-blue-500" />
-                            ) : (
-                              <div className="h-2.5 w-2.5 shrink-0 rounded-full border border-gray-300 dark:border-gray-600" />
+                        <div key={block.id} id={`structure-block-${block.id}`}>
+                          <button
+                            type="button"
+                            onClick={() => done && scrollToBlock(block.id)}
+                            disabled={!done}
+                            className={cn(
+                              'w-full rounded-md px-2 py-1 text-left text-[11px] transition-all',
+                              block.type === 'h3' && 'pl-5',
+                              done && 'cursor-pointer hover:bg-gray-100/80 dark:hover:bg-gray-700/40',
+                              !done && !isCurrent && 'opacity-50',
+                              isCurrent && 'bg-blue-50 ring-1 ring-blue-300 dark:bg-blue-900/20 dark:ring-blue-700',
                             )}
-                            <span className={cn(
-                              'min-w-0 truncate',
-                              done ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400',
-                            )}>
-                              {block.heading || '(No heading)'}
-                            </span>
-                          </div>
-                        </button>
+                          >
+                            <div className="flex items-center gap-1 min-w-0">
+                              {done ? (
+                                <Check className="h-2.5 w-2.5 shrink-0 text-emerald-500" />
+                              ) : isCurrent ? (
+                                <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-blue-500" />
+                              ) : (
+                                <div className="h-2.5 w-2.5 shrink-0 rounded-full border border-gray-300 dark:border-gray-600" />
+                              )}
+                              <span className={cn(
+                                'min-w-0 truncate',
+                                done ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400',
+                              )}>
+                                {block.heading || (block.type === 'intro' ? '(Intro)' : '(No heading)')}
+                              </span>
+                            </div>
+                            {/* LSI tags per block */}
+                            {(blockKgLsi.length > 0 || blockUserLsi.length > 0) && (
+                              <div className="mt-1 flex flex-wrap gap-0.5 pl-4">
+                                {blockKgLsi.map((k, i) => (
+                                  <span key={`kg-${i}`} className="inline-flex items-center rounded-full bg-violet-50 px-1 py-px text-[9px] font-medium text-violet-600 ring-1 ring-inset ring-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:ring-violet-700/40">
+                                    {k}
+                                  </span>
+                                ))}
+                                {blockUserLsi.map((k, i) => (
+                                  <span key={`u-${i}`} className="inline-flex items-center rounded-full bg-gray-100 px-1 py-px text-[9px] text-gray-500 ring-1 ring-inset ring-gray-200 dark:bg-gray-700/40 dark:text-gray-400 dark:ring-gray-600/40">
+                                    {k}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </button>
+                        </div>
                       );
                     })}
                   </div>

@@ -427,6 +427,8 @@ export const startQueueProcessor = () => {
                 entities: kgLsiEntities.slice(0, 10),
               });
               await addLog(generationId, 'thinking', `Top KG entities: ${kgLsiEntities.slice(0, 8).join(', ')}`);
+              // Persist KG entities to DB for UI display
+              await Generation.findByIdAndUpdate(generationId, { $set: { kgEntities: kgLsiEntities } });
             } else {
               await addLog(generationId, 'thinking', 'Knowledge Graph returned no entities for this keyword — using user LSI only.');
             }

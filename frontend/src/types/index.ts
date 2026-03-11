@@ -180,6 +180,8 @@ export interface Generation {
   currentStep?: string;
   logs: GenerationLog[];
   serpResults: SerpResult[];
+  // Knowledge Graph LSI entities (step 1.5)
+  kgEntities?: string[];
   // Structure analysis
   structureAnalysis?: StructureAnalysis;
   articleBlocks?: ArticleBlock[];

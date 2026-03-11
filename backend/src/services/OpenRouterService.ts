@@ -758,7 +758,7 @@ CRITICAL RULES:
    - BUT: vary formatting to show expertise and improve readability:
      * Short bullet lists (3-6 items) when listing concrete things (criteria, steps, features, pros/cons)
      * A comparison table when comparing 2-4 options side by side (prices, features, providers)
-     * Bold key terms or short phrases to highlight important concepts
+     * Bold SPARINGLY — maximum 1-2 bold phrases per section, only for genuinely critical terms a reader must not miss. Do NOT bold decoratively, do NOT bold every keyword, do NOT bold phrases just because they sound important.
      * Numbered lists for step-by-step processes
    - BALANCE: each section should have at least 1-2 paragraphs of prose. A section can ALSO include a list or table, but never ONLY a list.
    - Aim for variety across sections: if one section is pure prose, the next might have a short list or table. This keeps readers engaged.
