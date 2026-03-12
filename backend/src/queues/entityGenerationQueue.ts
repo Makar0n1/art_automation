@@ -134,35 +134,66 @@ function getEvidenceDefault(targetOutcome: string): string {
 
 // ─── SERP-derived term extractor ─────────────────────────────────────────────
 
-function extractSerpDerivedTerms(serpResults: Array<{ title: string; content?: string }>): EnrichedEntity[] {
+function extractSerpDerivedTerms(
+  serpResults: Array<{ title: string; content?: string }>,
+  mainKeyword: string
+): EnrichedEntity[] {
   const text = serpResults.slice(0, 7)
-    .map(r => `${r.title} ${r.content?.slice(0, 300) ?? ''}`)
+    .map(r => `${r.title} ${r.content?.slice(0, 500) ?? ''}`)
     .join(' ');
 
-  // Extract capitalized multi-word phrases (potential named terms) — 2-4 words
-  const matches = text.match(/\b[A-ZÄÖÜ][a-zäöüßА-Яа-яёЁ][a-zA-ZäöüßÄÖÜА-Яа-яёЁ]+(?:\s+[A-ZÄÖÜa-zäöüß][a-zA-ZäöüßÄÖÜА-Яа-яёЁ]+){0,3}\b/g) ?? [];
+  // Extract capitalized multi-word phrases (potential named terms) — 1-3 words only
+  const matches = text.match(/\b[A-ZÄÖÜ][a-zäöüßА-Яа-яёЁ]{2,}(?:\s+[A-ZÄÖÜ][a-zäöüßÄÖÜА-Яа-яёЁ]{2,}){0,2}\b/g) ?? [];
+
+  // Count occurrences for recurrence filter
+  const countMap = new Map<string, number>();
+  for (const m of matches) {
+    const key = m.trim().toLowerCase();
+    countMap.set(key, (countMap.get(key) ?? 0) + 1);
+  }
+
+  // Junk patterns to exclude
+  const mainKwLower = mainKeyword.toLowerCase();
+  const JUNK_PREFIXES = /^(warum|wie|was|wer|wann|wo|welch|gibt|sind|kann|wird|haben|durch|nach|über|unter|bei|mit|von|für|inh |min |max )/i;
+  const JUNK_SUFFIXES = /(plattform|agentur|anbieter|dienstleister|website|seite|portal|magazin|blog|gmbh|ltd|inc|ag)$/i;
+  const TOO_GENERIC = new Set(['ghostwriter', 'ghostwriting', 'arbeit', 'soziale', 'hilfe', 'schreiben', 'texte', 'online']);
 
   const seen = new Set<string>();
   const terms: EnrichedEntity[] = [];
 
   for (const m of matches) {
     const normalized = m.trim();
-    if (normalized.length < 4 || normalized.length > 60) continue;
     const key = normalized.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
 
+    // Length: min 4 chars, max 40 chars
+    if (normalized.length < 4 || normalized.length > 40) continue;
+    // Max 3 words
+    if (normalized.split(/\s+/).length > 3) continue;
+    // Dedupe
+    if (seen.has(key)) continue;
+    // Require recurrence >= 2 (appears in multiple SERP results)
+    if ((countMap.get(key) ?? 0) < 2) continue;
+    // Skip if it's basically the main keyword
+    if (key === mainKwLower || mainKwLower.includes(key) || key.includes(mainKwLower)) continue;
+    // Skip junk prefixes (verbs, prepositions, truncated abbreviations)
+    if (JUNK_PREFIXES.test(normalized)) continue;
+    // Skip brand/platform suffixes
+    if (JUNK_SUFFIXES.test(normalized)) continue;
+    // Skip too-generic single words
+    if (normalized.split(/\s+/).length === 1 && TOO_GENERIC.has(key)) continue;
+
+    seen.add(key);
     terms.push({
       name: normalized,
       types: [],
-      score: 1,
+      score: Math.min((countMap.get(key) ?? 1) / 3, 1),  // Score by recurrence
       source: 'serp_derived',
-      sourceConfidence: 0.4,
+      sourceConfidence: 0.4 + Math.min((countMap.get(key) ?? 1) / 10, 0.2),  // 0.4-0.6 by recurrence
       confirmedBy: ['serp_derived'],
     });
   }
 
-  return terms.slice(0, 30); // Cap to avoid noise
+  return terms.slice(0, 20); // Tighter cap after cleaning
 }
 
 // ─── Queue processor ─────────────────────────────────────────────────────────
@@ -268,8 +299,8 @@ export const startEntityQueueProcessor = () => {
         await addLog(generationId, 'thinking', 'Google API key not configured — using SERP-derived terms only');
       }
 
-      // 1c: SERP-derived terms
-      const serpTerms = extractSerpDerivedTerms(serpResults);
+      // 1c: SERP-derived terms (cleaned — junk filtered, recurrence >= 2)
+      const serpTerms = extractSerpDerivedTerms(serpResults, generation.config.mainKeyword);
       await addLog(generationId, 'thinking', `Extracted ${serpTerms.length} SERP-derived term candidates`);
 
       // 1d: Merge + dedup (cross-confirm entities found in both sources)
@@ -291,6 +322,19 @@ export const startEntityQueueProcessor = () => {
       }
 
       await addLog(generationId, 'info', `📦 Total entities: ${mergedEntities.length} (${kgEntities.length} KG + ${serpTerms.length} SERP-derived)`);
+
+      // 1d-bis: Determine entity confidence level
+      // If KG gave < 5 and cleaned SERP terms < 8, entity layer is too weak for entity-aware writing
+      const entityConfidenceMode: 'kg_backed' | 'hybrid_serp' | 'intent_only' =
+        kgEntities.length >= 5 ? 'kg_backed' :
+        mergedEntities.length >= 8 ? 'hybrid_serp' :
+        'intent_only';
+
+      if (entityConfidenceMode === 'intent_only') {
+        await addLog(generationId, 'warn', `⚠️ Entity confidence: INTENT_ONLY mode (KG=${kgEntities.length}, SERP cleaned=${serpTerms.length}). Entity-aware writing disabled.`);
+      } else {
+        await addLog(generationId, 'info', `🎯 Entity confidence: ${entityConfidenceMode} (KG=${kgEntities.length}, SERP=${serpTerms.length})`);
+      }
 
       // 1e: Intent map
       await updateProgress(generationId, GenerationStatus.PARSING_SERP, calcProgress(1, 0.75));
@@ -530,13 +574,34 @@ export const startEntityQueueProcessor = () => {
       for (let i = 0; i < blocksToWrite.length; i++) {
         const block = blocksToWrite[i];
         await updateProgress(generationId, GenerationStatus.WRITING_ARTICLE, calcProgress(5, i / blocksToWrite.length));
+
+        // H1 is title-only — never generate body text for it
+        if (block.type === 'h1') {
+          const writtenBlock: ArticleBlock = {
+            id: block.id, type: block.type, heading: block.heading,
+            instruction: block.instruction, lsi: [...(block.lsi || [])],
+            content: block.heading,  // Content IS the heading
+            primaryClusterIndex: block.primaryClusterIndex,
+            secondaryClusterIndex: block.secondaryClusterIndex,
+            targetOutcome: block.targetOutcome,
+            evidenceDefault: block.evidenceDefault,
+          };
+          writtenBlocks.push(writtenBlock);
+          accumulatedContent = `# ${block.heading}\n\n`;
+          await addLog(generationId, 'thinking', `Block #${block.id} [H1]: "${block.heading}" (title only, no body text)`);
+          await Generation.findByIdAndUpdate(generationId, { $set: { articleBlocks: writtenBlocks } });
+          emitBlocks(generationId, writtenBlocks);
+          continue;
+        }
+
         await addLog(generationId, 'thinking', `Writing Block #${block.id} [${block.type.toUpperCase()}]: "${block.heading}"`);
 
         let generatedContent = '';
 
-        // Entity-aware writing for blocks with assigned clusters
+        // Entity-aware writing for blocks with assigned clusters (skip for intro/conclusion/faq)
+        // In intent_only mode, always use standard generation (entity layer too weak)
         const hasPrimaryCluster = block.primaryClusterIndex !== null && block.primaryClusterIndex !== undefined;
-        if (hasPrimaryCluster && block.type !== 'intro' && block.type !== 'conclusion' && block.type !== 'faq') {
+        if (hasPrimaryCluster && entityConfidenceMode !== 'intent_only' && block.type !== 'intro' && block.type !== 'conclusion' && block.type !== 'faq') {
           const cluster = entityClusters[block.primaryClusterIndex!];
           const secondaryCluster = (block.secondaryClusterIndex !== null && block.secondaryClusterIndex !== undefined)
             ? entityClusters[block.secondaryClusterIndex]
@@ -606,9 +671,8 @@ export const startEntityQueueProcessor = () => {
         };
         writtenBlocks.push(writtenBlock);
 
-        // Build accumulated context
-        if (block.type === 'h1') accumulatedContent = `# ${generatedContent}\n\n`;
-        else if (block.type === 'intro') accumulatedContent += `${generatedContent}\n\n`;
+        // Build accumulated context (H1 handled above via continue)
+        if (block.type === 'intro') accumulatedContent += `${generatedContent}\n\n`;
         else if (block.type === 'h2' || block.type === 'conclusion') accumulatedContent += `## ${block.heading}\n\n${generatedContent}\n\n`;
         else if (block.type === 'h3') accumulatedContent += `### ${block.heading}\n\n${generatedContent}\n\n`;
         else if (block.type === 'faq') accumulatedContent += `## ${block.heading}\n\n${generatedContent}\n\n`;
@@ -626,15 +690,18 @@ export const startEntityQueueProcessor = () => {
       // Build article markdown
       let finalArticle = '';
       for (const block of writtenBlocks) {
-        const cleanContent = stripLeadingHeading(block.content || '', block.heading);
-        if (block.type === 'h1') finalArticle += `# ${cleanContent}\n\n`;
-        else if (block.type === 'intro') finalArticle += `${cleanContent}\n\n`;
-        else if (block.type === 'h2' || block.type === 'conclusion') finalArticle += `## ${block.heading}\n\n${cleanContent}\n\n`;
-        else if (block.type === 'h3') finalArticle += `### ${block.heading}\n\n${cleanContent}\n\n`;
-        else if (block.type === 'faq') finalArticle += `## ${block.heading}\n\n${cleanContent}\n\n`;
+        if (block.type === 'h1') {
+          finalArticle += `# ${block.heading}\n\n`;  // H1 = heading only, no body
+        } else {
+          const cleanContent = stripLeadingHeading(block.content || '', block.heading);
+          if (block.type === 'intro') finalArticle += `${cleanContent}\n\n`;
+          else if (block.type === 'h2' || block.type === 'conclusion') finalArticle += `## ${block.heading}\n\n${cleanContent}\n\n`;
+          else if (block.type === 'h3') finalArticle += `### ${block.heading}\n\n${cleanContent}\n\n`;
+          else if (block.type === 'faq') finalArticle += `## ${block.heading}\n\n${cleanContent}\n\n`;
+        }
       }
 
-      const totalWordCount = writtenBlocks.reduce((s, b) => s + (b.content?.split(/\s+/).length || 0), 0);
+      const totalWordCount = writtenBlocks.filter(b => b.type !== 'h1').reduce((s, b) => s + (b.content?.split(/\s+/).length || 0), 0);
       await addLog(generationId, 'info', `🎉 Writing complete! ${totalWordCount} words across ${writtenBlocks.length} blocks`);
       await Generation.findByIdAndUpdate(generationId, { article: finalArticle, articleBlocks: writtenBlocks });
       await addLog(generationId, 'info', `⏱️ Step 5 took ${formatDuration(Date.now() - stepStartTime)}`);
@@ -685,8 +752,8 @@ export const startEntityQueueProcessor = () => {
           }
 
           const linkArticle = blocksAfterLinks.map(b => {
+            if (b.type === 'h1') return `# ${b.heading}\n\n`;
             const clean = stripLeadingHeading(b.content || '', b.heading);
-            if (b.type === 'h1') return `# ${clean}\n\n`;
             if (b.type === 'intro') return `${clean}\n\n`;
             if (b.type === 'h2' || b.type === 'conclusion') return `## ${b.heading}\n\n${clean}\n\n`;
             if (b.type === 'h3') return `### ${b.heading}\n\n${clean}\n\n`;
@@ -842,12 +909,15 @@ export const startEntityQueueProcessor = () => {
         // Build final reviewed article
         let finalReviewedArticle = '';
         for (const block of reviewedBlocks) {
-          const clean = stripLeadingHeading(block.content || '', block.heading);
-          if (block.type === 'h1') finalReviewedArticle += `# ${clean}\n\n`;
-          else if (block.type === 'intro') finalReviewedArticle += `${clean}\n\n`;
-          else if (block.type === 'h2' || block.type === 'conclusion') finalReviewedArticle += `## ${block.heading}\n\n${clean}\n\n`;
-          else if (block.type === 'h3') finalReviewedArticle += `### ${block.heading}\n\n${clean}\n\n`;
-          else if (block.type === 'faq') finalReviewedArticle += `## ${block.heading}\n\n${clean}\n\n`;
+          if (block.type === 'h1') {
+            finalReviewedArticle += `# ${block.heading}\n\n`;
+          } else {
+            const clean = stripLeadingHeading(block.content || '', block.heading);
+            if (block.type === 'intro') finalReviewedArticle += `${clean}\n\n`;
+            else if (block.type === 'h2' || block.type === 'conclusion') finalReviewedArticle += `## ${block.heading}\n\n${clean}\n\n`;
+            else if (block.type === 'h3') finalReviewedArticle += `### ${block.heading}\n\n${clean}\n\n`;
+            else if (block.type === 'faq') finalReviewedArticle += `## ${block.heading}\n\n${clean}\n\n`;
+          }
         }
 
         // 7c: Post-review entity coverage
@@ -856,11 +926,15 @@ export const startEntityQueueProcessor = () => {
         const postCriticalMissed = postReviewCoverage.filter(c => !c.mentioned && c.priority === 'critical').length;
         const entityCoveragePercent = Math.round(postCoveredCount / Math.max(mergedEntities.length, 1) * 100);
 
-        // 7d: Intent realized coverage (heuristic: keyword overlap)
+        // 7d: Intent realized coverage (stricter: at least 50% of question keywords must appear)
         const articleLower = finalReviewedArticle.toLowerCase();
+        // Stopwords to ignore when checking keyword overlap
+        const STOP_WORDS = new Set(['what','how','does','which','when','where','who','is','are','was','were','the','and','for','with','from','this','that','can','will','should','would','could','have','has','been','being','about','into','your','their','than','more','also','most','nach','für','wie','was','wer','wann','welche','welcher','werden','wird','sind','eine','einer','eines','einem','einen','der','die','das','und','oder','bei','mit','von','über','unter','durch','nach','aus','als','auf','noch','auch','sich','nicht','wenn','dann','aber','denn','weil','dass','oder','kann','wird']);
         const realizedCount = (updatedIntentMap?.mustAnswerQuestions ?? intentMap.mustAnswerQuestions).filter(q => {
-          const keyWords = q.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-          return keyWords.length > 0 && keyWords.some(w => articleLower.includes(w));
+          const keyWords = q.toLowerCase().replace(/[?!.]/g, '').split(/\s+/).filter(w => w.length > 3 && !STOP_WORDS.has(w));
+          if (keyWords.length === 0) return true;  // Trivial question — count as realized
+          const matchedCount = keyWords.filter(w => articleLower.includes(w)).length;
+          return matchedCount >= Math.ceil(keyWords.length * 0.5);  // At least 50% of keywords must appear
         }).length;
         const intentRealizedPercent = intentMap.mustAnswerQuestions.length > 0
           ? Math.round(realizedCount / intentMap.mustAnswerQuestions.length * 100)
@@ -875,7 +949,11 @@ export const startEntityQueueProcessor = () => {
           unsupportedHardClaims: 0, // Primitive — count in future version
         };
 
-        await addLog(generationId, 'info', `📊 Post-review coverage: ${postCoveredCount}/${mergedEntities.length} (${entityCoveragePercent}%) | Critical missed: ${postCriticalMissed}`);
+        const coverageConfidence = entityConfidenceMode === 'intent_only' ? 'low' : entityConfidenceMode === 'hybrid_serp' ? 'medium' : 'high';
+        await addLog(generationId, 'info', `📊 Post-review coverage: ${postCoveredCount}/${mergedEntities.length} (${entityCoveragePercent}%) | Critical missed: ${postCriticalMissed} | Confidence: ${coverageConfidence}`);
+        if (coverageConfidence === 'low') {
+          await addLog(generationId, 'warn', `⚠️ Coverage confidence: LOW (KG sparse, SERP-derived only). Coverage % is not a reliable quality signal.`);
+        }
         await addLog(generationId, 'info', `📊 Intent: planned=${intentPlannedPercent}%, realized=${intentRealizedPercent}%`);
 
         // 7f: SEO metadata

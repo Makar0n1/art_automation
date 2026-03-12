@@ -120,6 +120,7 @@ export default function ProjectPage() {
   const [project, setProject] = useState<(Project & { generations: Generation[] }) | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [formMode, setFormMode] = useState<'v1' | 'v2'>('v1');
   const [deleteGenerationId, setDeleteGenerationId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -223,7 +224,7 @@ export default function ProjectPage() {
         keywords: data.keywords?.split(',').map((k) => k.trim()).filter(Boolean) || [],
         language: data.language,
         region: data.region,
-        lsiKeywords: data.lsiKeywords?.split(',').map((k) => k.trim()).filter(Boolean) || [],
+        lsiKeywords: formMode === 'v2' ? [] : (data.lsiKeywords?.split(',').map((k) => k.trim()).filter(Boolean) || []),
         comment: data.comment,
         minWords: data.minWords,
         maxWords: data.maxWords,
@@ -231,6 +232,7 @@ export default function ProjectPage() {
         internalLinks: data.internalLinks,
         linksAsList: data.linksAsList,
         linksListPosition: data.linksListPosition,
+        mode: formMode === 'v2' ? 'v2' as const : undefined,
       };
 
       const response = await generationsApi.create(projectId, config);
@@ -320,20 +322,19 @@ export default function ProjectPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link href={`/dashboard/v2/project/${project._id}`}>
-            <Button
-              size="sm"
-              variant="ghost"
-              leftIcon={<Atom className="h-4 w-4 text-violet-600" />}
-              className="border border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-700/40 dark:text-violet-400 dark:hover:bg-violet-900/20"
-            >
-              Generate 2.0
-            </Button>
-          </Link>
+          <Button
+            size="sm"
+            variant="ghost"
+            leftIcon={<Atom className="h-4 w-4 text-violet-600" />}
+            className="border border-violet-200 text-violet-700 hover:bg-violet-50 dark:border-violet-700/40 dark:text-violet-400 dark:hover:bg-violet-900/20"
+            onClick={() => { setFormMode('v2'); setIsFormOpen(true); }}
+          >
+            Generate 2.0
+          </Button>
           <Button
             size="sm"
             leftIcon={<Rocket className="h-4 w-4" />}
-            onClick={() => setIsFormOpen(true)}
+            onClick={() => { setFormMode('v1'); setIsFormOpen(true); }}
           >
             New Generation
           </Button>
@@ -396,6 +397,11 @@ export default function ProjectPage() {
                         <h4 className="truncate text-sm font-medium text-gray-900 dark:text-white">
                           {gen.config.mainKeyword}
                         </h4>
+                        {gen.config.mode === 'v2' && (
+                          <Badge size="sm" className="bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+                            v2
+                          </Badge>
+                        )}
                         <Badge
                           variant={
                             gen.status === GenerationStatus.COMPLETED
@@ -443,8 +449,10 @@ export default function ProjectPage() {
       <Modal
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
-        title="New Article Generation"
-        description="Configure your SEO article generation settings"
+        title={formMode === 'v2' ? 'New Generation 2.0 (Entity + Intent)' : 'New Article Generation'}
+        description={formMode === 'v2'
+          ? 'Entity-aware pipeline with semantic clustering and intent analysis'
+          : 'Configure your SEO article generation settings'}
         size="xl"
       >
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6 max-h-[70vh] overflow-y-auto pr-2">
@@ -488,12 +496,14 @@ export default function ProjectPage() {
               {...register('keywords')}
             />
 
-            <Input
-              label="LSI Keywords"
-              placeholder="related1, related2, related3"
-              helperText="Latent Semantic Indexing keywords"
-              {...register('lsiKeywords')}
-            />
+            {formMode !== 'v2' && (
+              <Input
+                label="LSI Keywords"
+                placeholder="related1, related2, related3"
+                helperText="Latent Semantic Indexing keywords"
+                {...register('lsiKeywords')}
+              />
+            )}
 
             <TextArea
               label="Comment / Instructions"

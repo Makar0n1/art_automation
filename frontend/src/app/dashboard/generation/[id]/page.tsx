@@ -415,6 +415,11 @@ export default function GenerationPage() {
               <h1 className="truncate text-lg font-bold text-gray-900 dark:text-white">
                 {generation.config.mainKeyword}
               </h1>
+              {generation.config.mode === 'v2' && (
+                <Badge size="sm" className="bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+                  v2
+                </Badge>
+              )}
               <Badge variant={isCompleted ? 'success' : isFailed ? 'error' : 'info'} size="sm">
                 {getStatusLabel(generation.status)}
               </Badge>
