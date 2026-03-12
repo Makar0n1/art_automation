@@ -225,11 +225,6 @@ export default function DashboardPage() {
                         </p>
                       </div>
                       <div className="ml-3 flex items-center gap-2">
-                        {gen.config.mode === 'v2' && (
-                          <Badge size="sm" className="bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
-                            v2
-                          </Badge>
-                        )}
                         <Badge
                           variant={
                             gen.status === GenerationStatus.COMPLETED

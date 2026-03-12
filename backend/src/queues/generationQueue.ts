@@ -8,11 +8,15 @@ import Bull from 'bull';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { Generation, User } from '../models/index.js';
-import { GenerationStatus, GenerationLog, SerpResult, ArticleBlock, StructureAnalysis, AnsweredQuestion } from '../types/index.js';
+import {
+  GenerationStatus, GenerationLog, SerpResult, ArticleBlock, StructureAnalysis, AnsweredQuestion,
+  EnrichedEntity, EntityCluster, IntentMap, EntityCoverage, GenerationQualityScores,
+} from '../types/index.js';
 import { FirecrawlService } from '../services/FirecrawlService.js';
 import { OpenRouterService } from '../services/OpenRouterService.js';
 import { SupabaseService } from '../services/SupabaseService.js';
 import { KnowledgeGraphService } from '../services/KnowledgeGraphService.js';
+import { EntityClusteringService } from '../services/EntityClusteringService.js';
 import { publishSocketEvent } from '../utils/redis.js';
 import { decrypt } from '../services/CryptoService.js';
 
@@ -186,6 +190,67 @@ const emitBlocks = (generationId: string, blocks: ArticleBlock[]) => {
     blocks,
   });
 };
+
+// ─── Entity enrichment helpers (merged from v2 pipeline) ──────────────────────
+
+function getEvidenceDefault(targetOutcome: string): string {
+  const t = targetOutcome.toLowerCase();
+  if (/cost|price|preis|kosten|стоим|цен/.test(t)) return 'Include a price range or cost comparison frame';
+  if (/risk|legal|illegal|risiko|законн|правов/.test(t)) return 'Include a risk warning or legal qualification';
+  if (/how|process|schritt|wie|как|шаг|step/.test(t)) return 'Structure as numbered steps with concrete actions';
+  if (/compar|unterschied|vs\.|сравн|choice|выбор/.test(t)) return 'Include a comparison or differentiation between options';
+  return 'Provide a concrete example, case study, or specific actionable recommendation';
+}
+
+function extractSerpDerivedTerms(
+  serpResults: Array<{ title: string; content?: string }>,
+  mainKeyword: string
+): EnrichedEntity[] {
+  const text = serpResults.slice(0, 7)
+    .map(r => `${r.title} ${r.content?.slice(0, 500) ?? ''}`)
+    .join(' ');
+
+  const matches = text.match(/\b[A-ZÄÖÜ][a-zäöüßА-Яа-яёЁ]{2,}(?:\s+[A-ZÄÖÜ][a-zäöüßÄÖÜА-Яа-яёЁ]{2,}){0,2}\b/g) ?? [];
+
+  const countMap = new Map<string, number>();
+  for (const m of matches) {
+    const key = m.trim().toLowerCase();
+    countMap.set(key, (countMap.get(key) ?? 0) + 1);
+  }
+
+  const mainKwLower = mainKeyword.toLowerCase();
+  const JUNK_PREFIXES = /^(warum|wie|was|wer|wann|wo|welch|gibt|sind|kann|wird|haben|durch|nach|über|unter|bei|mit|von|für|inh |min |max )/i;
+  const JUNK_SUFFIXES = /(plattform|agentur|anbieter|dienstleister|website|seite|portal|magazin|blog|gmbh|ltd|inc|ag)$/i;
+  const TOO_GENERIC = new Set(['ghostwriter', 'ghostwriting', 'arbeit', 'soziale', 'hilfe', 'schreiben', 'texte', 'online']);
+
+  const seen = new Set<string>();
+  const terms: EnrichedEntity[] = [];
+
+  for (const m of matches) {
+    const normalized = m.trim();
+    const key = normalized.toLowerCase();
+    if (normalized.length < 4 || normalized.length > 40) continue;
+    if (normalized.split(/\s+/).length > 3) continue;
+    if (seen.has(key)) continue;
+    if ((countMap.get(key) ?? 0) < 2) continue;
+    if (key === mainKwLower || mainKwLower.includes(key) || key.includes(mainKwLower)) continue;
+    if (JUNK_PREFIXES.test(normalized)) continue;
+    if (JUNK_SUFFIXES.test(normalized)) continue;
+    if (normalized.split(/\s+/).length === 1 && TOO_GENERIC.has(key)) continue;
+
+    seen.add(key);
+    terms.push({
+      name: normalized,
+      types: [],
+      score: Math.min((countMap.get(key) ?? 1) / 3, 1),
+      source: 'serp_derived',
+      sourceConfidence: 0.4 + Math.min((countMap.get(key) ?? 1) / 10, 0.2),
+      confirmedBy: ['serp_derived'],
+    });
+  }
+
+  return terms.slice(0, 20);
+}
 
 /**
  * Progress calculation: 7 steps, each gets 1/7 of the bar
@@ -406,39 +471,106 @@ export const startQueueProcessor = () => {
     }
 
     // ========================================
-    // STEP 1.5: Knowledge Graph LSI Enrichment (optional, non-blocking)
+    // STEP 1.5: Entity Enrichment + Intent Map (optional, non-blocking)
+    // Enriched entities from KG + SERP-derived terms + intent map
     // ========================================
-    let kgLsiEntities: string[] = [];
+    let kgLsiEntities: string[] = [];  // backward-compat: string names for analyzeStructures
+    let mergedEntities: EnrichedEntity[] = [];
+    let entityConfidenceMode: 'kg_backed' | 'hybrid_serp' | 'intent_only' = 'intent_only';
+    let intentMap: IntentMap | undefined;
     {
       const apiKeys = getDecryptedApiKeys(user);
+
+      // 1.5a: KG enriched entities
+      let kgEntities: EnrichedEntity[] = [];
       if (apiKeys.google) {
         try {
-          await addLog(generationId, 'info', '🔗 Fetching Knowledge Graph entities for LSI enrichment...');
-          await addLog(generationId, 'thinking', 'Querying Google Knowledge Graph API to auto-generate LSI keywords based on official entity data...');
+          await addLog(generationId, 'info', '🔗 Fetching Knowledge Graph entities...');
+          const kgService = new KnowledgeGraphService(apiKeys.google);
+          const allKeywords = [generation.config.mainKeyword, ...(generation.config.keywords || [])];
+          kgEntities = await kgService.getEnrichedEntities(allKeywords);
 
-          const freshGen = await Generation.findById(generationId);
-          if (freshGen) {
-            const kgService = new KnowledgeGraphService(apiKeys.google);
-            const allKeywords = [freshGen.config.mainKeyword, ...(freshGen.config.keywords || [])];
-            kgLsiEntities = await kgService.getLsiEntities(allKeywords);
+          // Backward-compat: extract string names for analyzeStructures + UI display
+          kgLsiEntities = kgEntities.map(e => e.name);
 
-            if (kgLsiEntities.length > 0) {
-              await addLog(generationId, 'info', `✅ Knowledge Graph: found ${kgLsiEntities.length} entities`, {
-                entities: kgLsiEntities.slice(0, 10),
-              });
-              await addLog(generationId, 'thinking', `Top KG entities: ${kgLsiEntities.slice(0, 8).join(', ')}`);
-              // Persist KG entities to DB for UI display
-              await Generation.findByIdAndUpdate(generationId, { $set: { kgEntities: kgLsiEntities } });
-            } else {
-              await addLog(generationId, 'thinking', 'Knowledge Graph returned no entities for this keyword — using user LSI only.');
-            }
+          if (kgEntities.length > 0) {
+            await addLog(generationId, 'info', `✅ KG: ${kgEntities.length} entities`, {
+              topEntities: kgEntities.slice(0, 5).map(e => e.name),
+            });
+            await Generation.findByIdAndUpdate(generationId, { $set: { kgEntities: kgLsiEntities } });
+          } else {
+            await addLog(generationId, 'thinking', 'Knowledge Graph returned no entities for this keyword.');
           }
         } catch (error) {
-          await addLog(generationId, 'warn', `⚠️ Knowledge Graph fetch failed (non-critical): ${error instanceof Error ? error.message : 'Unknown error'}`);
-          // Non-blocking — continue without KG entities
+          await addLog(generationId, 'warn', `⚠️ KG fetch failed (non-critical): ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
       } else {
-        await addLog(generationId, 'thinking', 'Google API key not configured — skipping Knowledge Graph LSI enrichment.');
+        await addLog(generationId, 'thinking', 'Google API key not configured — skipping KG entities.');
+      }
+
+      // 1.5b: SERP-derived terms (cleaned, recurrence >= 2)
+      const freshGen = await Generation.findById(generationId);
+      const serpForTerms = freshGen?.serpResults ?? [];
+      const serpTerms = extractSerpDerivedTerms(
+        serpForTerms.map(r => ({ title: r.title, content: r.content })),
+        generation.config.mainKeyword
+      );
+      if (serpTerms.length > 0) {
+        await addLog(generationId, 'thinking', `Extracted ${serpTerms.length} cleaned SERP-derived terms`);
+      }
+
+      // 1.5c: Merge + dedup (cross-confirm entities found in both sources)
+      mergedEntities = [...kgEntities];
+      const kgNames = new Set(kgEntities.map(e => e.name.toLowerCase()));
+      for (const term of serpTerms) {
+        const key = term.name.toLowerCase();
+        if (kgNames.has(key)) {
+          const kgEntity = mergedEntities.find(e => e.name.toLowerCase() === key);
+          if (kgEntity && !kgEntity.confirmedBy.includes('serp_derived')) {
+            kgEntity.confirmedBy.push('serp_derived');
+            kgEntity.sourceConfidence = Math.min(kgEntity.sourceConfidence + 0.05, 0.98);
+          }
+        } else {
+          mergedEntities.push(term);
+        }
+      }
+
+      if (mergedEntities.length > 0) {
+        await addLog(generationId, 'info', `📦 Entities: ${mergedEntities.length} total (${kgEntities.length} KG + ${serpTerms.length} SERP-derived)`);
+      }
+
+      // 1.5d: Entity confidence mode
+      entityConfidenceMode =
+        kgEntities.length >= 5 ? 'kg_backed' :
+        mergedEntities.length >= 8 ? 'hybrid_serp' :
+        'intent_only';
+
+      if (entityConfidenceMode === 'intent_only') {
+        await addLog(generationId, 'thinking', `Entity confidence: intent_only (KG=${kgEntities.length}, SERP=${serpTerms.length}) — entity enrichment skipped`);
+      } else {
+        await addLog(generationId, 'info', `🎯 Entity confidence: ${entityConfidenceMode} (KG=${kgEntities.length}, SERP=${serpTerms.length})`);
+      }
+
+      // 1.5e: Intent map (1 AI call, ~500 tokens, has fallback)
+      if (apiKeys.openRouter) {
+        try {
+          await addLog(generationId, 'thinking', 'Resolving intent map...');
+          const openRouterForIntent = new OpenRouterService(apiKeys.openRouter, generation.config.model || 'openai/gpt-4.1-mini');
+          intentMap = await openRouterForIntent.resolveIntentMap(
+            generation.config.mainKeyword,
+            generation.config.language,
+            serpForTerms,
+            generation.config.articleType || 'informational'
+          );
+          await Generation.findByIdAndUpdate(generationId, { $set: { intentMap } });
+          await addLog(generationId, 'info', `🎯 Intent: "${intentMap.primaryIntent}"`, {
+            funnelStage: intentMap.funnelStage,
+            hiddenIntents: intentMap.hiddenIntents.slice(0, 3),
+            mustAnswerQuestions: intentMap.mustAnswerQuestions.length,
+          });
+        } catch (error) {
+          await addLog(generationId, 'warn', `⚠️ Intent map failed (non-critical): ${error instanceof Error ? error.message : 'Unknown'}`);
+        }
       }
     }
 
@@ -537,6 +669,97 @@ export const startQueueProcessor = () => {
       await addLog(generationId, 'info', `⏱️ Structure analysis took ${formatDuration(structureDuration)} | 🎯 ${structureTokens.totalTokens.toLocaleString()} tokens`);
 
       await addLog(generationId, 'info', '✅ Structure analysis completed. Continuing to block enrichment...');
+    }
+
+    // ========================================
+    // STEP 2.5: Entity Clustering + Block Annotation (optional, non-blocking)
+    // Clusters entities semantically, then assigns best-matching cluster to each H2/H3 block
+    // ========================================
+    let entityClusters: EntityCluster[] = [];
+    {
+      const apiKeys = getDecryptedApiKeys(user);
+      const shouldCluster = entityConfidenceMode !== 'intent_only'
+        && mergedEntities.length >= 5
+        && apiKeys.supabase
+        && apiKeys.openRouter;
+
+      if (shouldCluster) {
+        try {
+          await addLog(generationId, 'thinking', 'Clustering entities semantically...');
+          const supabaseForClustering = new SupabaseService(
+            apiKeys.supabase!.url,
+            apiKeys.supabase!.secretKey,
+            apiKeys.openRouter!
+          );
+          const clusteringService = new EntityClusteringService(supabaseForClustering);
+          entityClusters = await clusteringService.clusterEntities(
+            mergedEntities,
+            generation.config.maxWords || 1800
+          );
+
+          await Generation.findByIdAndUpdate(generationId, { $set: { entityClusters } });
+          await addLog(generationId, 'info', `🧠 ${mergedEntities.length} entities → ${entityClusters.length} clusters`, {
+            clusters: entityClusters.map(c => ({ label: c.label, count: c.entities.length })),
+          });
+
+          // Annotate blocks with best-matching cluster (word overlap heuristic)
+          if (entityClusters.length > 0) {
+            const freshGen = await Generation.findById(generationId);
+            if (freshGen && freshGen.articleBlocks && freshGen.articleBlocks.length > 0) {
+              const blocks = freshGen.articleBlocks!;
+              let annotated = 0;
+
+              for (const block of blocks) {
+                if (block.type !== 'h2' && block.type !== 'h3') continue;
+                const headingWords = new Set(
+                  block.heading.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+                );
+                if (headingWords.size === 0) continue;
+
+                let bestIdx = -1;
+                let bestScore = 0;
+                for (let ci = 0; ci < entityClusters.length; ci++) {
+                  const cluster = entityClusters[ci];
+                  const entityWords = new Set(
+                    cluster.entities.flatMap(e =>
+                      e.name.toLowerCase().split(/\s+/).filter(w => w.length > 3)
+                    )
+                  );
+                  let overlap = 0;
+                  for (const w of headingWords) {
+                    if (entityWords.has(w)) overlap++;
+                  }
+                  // Also check if any entity name appears as substring in heading
+                  for (const e of cluster.entities) {
+                    if (block.heading.toLowerCase().includes(e.name.toLowerCase())) {
+                      overlap += 2;
+                    }
+                  }
+                  if (overlap > bestScore) {
+                    bestScore = overlap;
+                    bestIdx = ci;
+                  }
+                }
+
+                if (bestIdx >= 0 && bestScore > 0) {
+                  block.primaryClusterIndex = bestIdx;
+                  annotated++;
+                }
+              }
+
+              if (annotated > 0) {
+                await Generation.findByIdAndUpdate(generationId, { $set: { articleBlocks: blocks } });
+                emitBlocks(generationId, blocks);
+                await addLog(generationId, 'thinking', `Annotated ${annotated} blocks with entity clusters`);
+              }
+            }
+          }
+        } catch (error) {
+          await addLog(generationId, 'warn', `⚠️ Clustering failed (non-critical): ${error instanceof Error ? error.message : 'Unknown'}`);
+        }
+      } else if (mergedEntities.length > 0) {
+        await addLog(generationId, 'thinking', 'Skipping clustering (insufficient entities or missing Supabase)');
+      }
     }
 
     // ========================================
@@ -860,6 +1083,30 @@ export const startQueueProcessor = () => {
           await addLog(generationId, 'thinking', `Block #${block.id}: No verified facts - writing informatively without specific claims`);
         }
 
+        // Build entity context for H2/H3 blocks (optional enrichment)
+        let blockEntityContext: Parameters<typeof openRouter.generateBlockContent>[7] | undefined;
+        if (
+          entityConfidenceMode !== 'intent_only'
+          && (block.type === 'h2' || block.type === 'h3')
+          && block.primaryClusterIndex !== undefined
+          && block.primaryClusterIndex !== null
+          && entityClusters[block.primaryClusterIndex]
+        ) {
+          const cluster = entityClusters[block.primaryClusterIndex];
+          const critical = cluster.entities.filter(e => e.priority === 'critical').slice(0, 3);
+          const supporting = cluster.entities.filter(e => e.priority === 'supporting').slice(0, 4);
+          // Only enrich if we have meaningful entities
+          if (critical.length > 0 || supporting.length > 0) {
+            blockEntityContext = {
+              requiredEntities: critical.map(e => ({ name: e.name, description: e.description })),
+              preferredEntities: supporting.map(e => ({ name: e.name, description: e.description })),
+              evidenceHint: getEvidenceDefault(block.instruction || ''),
+              targetOutcome: block.targetOutcome,
+            };
+            await addLog(generationId, 'thinking', `Block #${block.id}: enriching with ${critical.length} required + ${supporting.length} preferred entities from cluster "${cluster.label}"`);
+          }
+        }
+
         // Generate content for this block
         const generatedContent = await openRouter.generateBlockContent(
           blockForGeneration,
@@ -868,7 +1115,8 @@ export const startQueueProcessor = () => {
           freshGeneration.config.language,
           targetWordCount,
           freshGeneration.config.articleType || 'informational',
-          freshGeneration.config.comment
+          freshGeneration.config.comment,
+          blockEntityContext
         );
 
         // Count words in generated content
@@ -1608,6 +1856,70 @@ export const startQueueProcessor = () => {
       } catch (reviewError) {
         await addLog(generationId, 'error', `⚠️ Article review failed: ${reviewError instanceof Error ? reviewError.message : 'Unknown error'}`);
         await addLog(generationId, 'warn', 'Proceeding to completion without review.');
+      }
+    }
+
+    // ========================================
+    // Entity Coverage + Quality Diagnostics (post-review, non-blocking)
+    // Pure QA metrics — does NOT gate the pipeline
+    // ========================================
+    if (mergedEntities.length > 0) {
+      try {
+        const finalGen = await Generation.findById(generationId);
+        const finalArticle = finalGen?.article ?? '';
+
+        if (finalArticle) {
+          const apiKeys = getDecryptedApiKeys(user);
+          const openRouterForCoverage = new OpenRouterService(apiKeys.openRouter!, aiModel);
+
+          // Post-review entity coverage (synchronous string matching, no AI call)
+          const postReviewCoverage = openRouterForCoverage.checkEntityCoverage(finalArticle, mergedEntities, 'post_review');
+          const coveredCount = postReviewCoverage.filter(c => c.mentioned).length;
+          const criticalMissed = postReviewCoverage.filter(c => !c.mentioned && c.priority === 'critical').length;
+          const entityCoveragePercent = Math.round(coveredCount / mergedEntities.length * 100);
+
+          // Intent realized (keyword overlap check)
+          let intentRealizedPercent = 100;
+          if (intentMap && intentMap.mustAnswerQuestions.length > 0) {
+            const articleLower = finalArticle.toLowerCase();
+            const STOP_WORDS = new Set(['what','how','does','which','when','where','who','is','are','was','were','the','and','for','with','from','this','that','can','will','should','would','could','have','has','been','being','about','into','your','their','than','more','also','most','nach','für','wie','was','wer','wann','welche','welcher','werden','wird','sind','eine','einer','eines','einem','einen','der','die','das','und','oder','bei','mit','von','über','unter','durch','nach','aus','als','auf','noch','auch','sich','nicht','wenn','dann','aber','denn','weil','dass','oder','kann','wird']);
+            const realizedCount = intentMap.mustAnswerQuestions.filter(q => {
+              const keyWords = q.toLowerCase().replace(/[?!.]/g, '').split(/\s+/).filter(w => w.length > 3 && !STOP_WORDS.has(w));
+              if (keyWords.length === 0) return true;
+              const matchedCount = keyWords.filter(w => articleLower.includes(w)).length;
+              return matchedCount >= Math.ceil(keyWords.length * 0.5);
+            }).length;
+            intentRealizedPercent = Math.round(realizedCount / intentMap.mustAnswerQuestions.length * 100);
+          }
+
+          // Quality scores
+          const qualityScores: GenerationQualityScores = {
+            entityCoveragePercent,
+            criticalEntitiesMissed: criticalMissed,
+            intentPlannedPercent: 100, // v1 doesn't have planned coverage mapping
+            intentRealizedPercent,
+            unsupportedHardClaims: 0,
+          };
+
+          const coverageConfidence = entityConfidenceMode === 'intent_only' ? 'low' : entityConfidenceMode === 'hybrid_serp' ? 'medium' : 'high';
+
+          await Generation.findByIdAndUpdate(generationId, {
+            $set: {
+              entityCoverage: postReviewCoverage,
+              qualityScores,
+            },
+          });
+
+          await addLog(generationId, 'info', `📊 Entity coverage: ${coveredCount}/${mergedEntities.length} (${entityCoveragePercent}%) | Critical missed: ${criticalMissed} | Confidence: ${coverageConfidence}`);
+          if (intentMap) {
+            await addLog(generationId, 'info', `📊 Intent realized: ${intentRealizedPercent}% (${intentMap.mustAnswerQuestions.length} questions)`);
+          }
+          if (coverageConfidence === 'low') {
+            await addLog(generationId, 'thinking', 'Coverage confidence LOW — entity metrics are informational only');
+          }
+        }
+      } catch (error) {
+        await addLog(generationId, 'warn', `⚠️ Coverage diagnostics failed (non-critical): ${error instanceof Error ? error.message : 'Unknown'}`);
       }
     }
 

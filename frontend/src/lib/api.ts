@@ -235,7 +235,6 @@ export const generationsApi = {
     minWords?: number;
     maxWords?: number;
     model?: string;
-    mode?: 'v1' | 'v2';
     audience?: string;
     mustCover?: string[];
     mustAvoid?: string[];

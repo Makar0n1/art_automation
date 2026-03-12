@@ -114,7 +114,6 @@ export interface GenerationConfig {
   language: string;
   region: string;
   lsiKeywords: string[];
-  mode?: 'v1' | 'v2';
   comment?: string;
   internalLinks: InternalLink[];
   linksAsList: boolean;
@@ -122,7 +121,6 @@ export interface GenerationConfig {
   minWords?: number;
   maxWords?: number;
   model?: string;
-  // v2-only content directives
   audience?: string;
   mustCover?: string[];
   mustAvoid?: string[];

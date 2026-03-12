@@ -11,7 +11,6 @@ import { config } from './utils/config.js';
 import { logger } from './utils/logger.js';
 import { closeRedisConnections } from './utils/redis.js';
 import { generationQueue, setWorkerMode, startQueueProcessor } from './queues/generationQueue.js';
-import { entityGenerationQueue, setEntityWorkerMode, startEntityQueueProcessor } from './queues/entityGenerationQueue.js';
 
 // Worker identification
 const workerId = `worker-${process.pid}-${Date.now().toString(36)}`;
@@ -30,19 +29,15 @@ async function startWorker(): Promise<void> {
     await mongoose.connect(config.mongodb.uri);
     logger.info('Connected to MongoDB');
 
-    // Set worker mode for queues (uses Redis pub/sub instead of direct Socket.IO)
+    // Set worker mode for queue (uses Redis pub/sub instead of direct Socket.IO)
     setWorkerMode();
-    setEntityWorkerMode();
 
-    // Start queue processors (IMPORTANT: only workers should process jobs!)
+    // Start queue processor (IMPORTANT: only workers should process jobs!)
     startQueueProcessor();
-    startEntityQueueProcessor();
 
     // Log queue status
     const stats = await generationQueue.getJobCounts();
-    const entityStats = await entityGenerationQueue.getJobCounts();
-    logger.info(`📊 v1 queue: ${stats.waiting} waiting, ${stats.active} active`);
-    logger.info(`📊 v2 queue: ${entityStats.waiting} waiting, ${entityStats.active} active`);
+    logger.info(`📊 Queue: ${stats.waiting} waiting, ${stats.active} active`);
 
     logger.info(`🚀 Worker ${workerId} is ready and processing jobs`);
 
@@ -61,7 +56,6 @@ async function gracefulShutdown(signal: string): Promise<void> {
   try {
     // Stop accepting new jobs
     await generationQueue.pause(true);
-    await entityGenerationQueue.pause(true);
     logger.info('Paused queue processing');
 
     // Wait for active jobs to complete (max 30 seconds)
@@ -71,10 +65,9 @@ async function gracefulShutdown(signal: string): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 30000));
     }
 
-    // Close queues
+    // Close queue
     await generationQueue.close();
-    await entityGenerationQueue.close();
-    logger.info('Queues closed');
+    logger.info('Queue closed');
 
     // Close Redis connections
     await closeRedisConnections();

@@ -9,7 +9,6 @@ import { Generation, Project, User } from '../models/index.js';
 import { AuthenticatedRequest, ApiResponse, GenerationStatus } from '../types/index.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { queueGeneration, getQueueStats } from '../queues/generationQueue.js';
-import { queueEntityGeneration } from '../queues/entityGenerationQueue.js';
 import { logger } from '../utils/logger.js';
 import { publishSocketEvent } from '../utils/redis.js';
 import { assembleArticleFromBlocks } from '../utils/articleAssembly.js';
@@ -41,7 +40,6 @@ export const createGeneration = async (
       minWords,
       maxWords,
       model,
-      mode,
       audience,
       mustCover,
       mustAvoid,
@@ -85,8 +83,6 @@ export const createGeneration = async (
         minWords: Math.max(500, Math.min(5000, Number(minWords) || 1200)),
         maxWords: Math.max(700, Math.min(8000, Number(maxWords) || 1800)),
         model: model || 'openai/gpt-5.2',
-        mode: mode === 'v2' ? 'v2' : 'v1',
-        // v2-only directives (stored as-is, ignored by v1 pipeline)
         audience: audience || undefined,
         mustCover: Array.isArray(mustCover) ? mustCover.filter(Boolean) : [],
         mustAvoid: Array.isArray(mustAvoid) ? mustAvoid.filter(Boolean) : [],
@@ -96,16 +92,12 @@ export const createGeneration = async (
       logs: [{
         timestamp: new Date(),
         level: 'info',
-        message: mode === 'v2' ? 'Generation 2.0 created and queued (entity pipeline)' : 'Generation created and queued',
+        message: 'Generation created and queued',
       }],
     });
 
-    // Route to appropriate queue based on mode
-    if (mode === 'v2') {
-      await queueEntityGeneration(generation._id.toString(), userId);
-    } else {
-      await queueGeneration(generation._id.toString(), userId);
-    }
+    // Queue for processing
+    await queueGeneration(generation._id.toString(), userId);
 
     logger.info(`Generation created: ${generation._id}`);
 

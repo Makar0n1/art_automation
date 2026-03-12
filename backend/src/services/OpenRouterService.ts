@@ -606,7 +606,13 @@ All text must be in ${langName}.`;
     language: string,
     targetWordCount: number,
     articleType: string = 'informational',
-    comment?: string
+    comment?: string,
+    entityContext?: {
+      requiredEntities: Array<{ name: string; description?: string }>;
+      preferredEntities: Array<{ name: string; description?: string }>;
+      evidenceHint: string;
+      targetOutcome?: string;
+    }
   ): Promise<string> {
     const languageNames: Record<string, string> = {
       'en': 'English',
@@ -685,13 +691,43 @@ QUALITY RULES:
           const wordsPerBlock = Math.round((targetWordCount - reservedWords) / targetContentBlocks);
           estimatedWords = Math.max(150, Math.min(350, wordsPerBlock));
           const hardCeiling = estimatedWords + 50;
+
+          // Entity enrichment for H2/H3 blocks (optional, max ~400 chars)
+          let entityEnrichment = '';
+          if (entityContext) {
+            const parts: string[] = [];
+            if (entityContext.requiredEntities.length > 0) {
+              const reqList = entityContext.requiredEntities
+                .slice(0, 3)
+                .map(e => e.description ? `${e.name} (${e.description.slice(0, 60)})` : e.name)
+                .join('; ');
+              parts.push(`REQUIRED ENTITIES (integrate organically — explain through meaning, never list mechanically): ${reqList}`);
+            }
+            if (entityContext.preferredEntities.length > 0) {
+              const prefList = entityContext.preferredEntities
+                .slice(0, 4)
+                .map(e => e.name)
+                .join(', ');
+              parts.push(`PREFERRED ENTITIES (use only if they genuinely help): ${prefList}`);
+            }
+            if (entityContext.evidenceHint) {
+              parts.push(`EVIDENCE: ${entityContext.evidenceHint}`);
+            }
+            if (entityContext.targetOutcome) {
+              parts.push(`SECTION GOAL: ${entityContext.targetOutcome}`);
+            }
+            // Hard cap ~400 chars to prevent prompt bloat
+            const raw = parts.join('\n- ');
+            entityEnrichment = raw.length > 400 ? `\n${raw.slice(0, 397)}...` : `\n- ${raw}`;
+          }
+
           blockTypeInstructions = `Write ${estimatedWords}-${hardCeiling} words for this section. HARD MAXIMUM: ${hardCeiling} words. Going over is WORSE than being too brief.
 - Start with 1-2 paragraphs of PROSE, then optionally add a short list or table if the content lends itself to it.
 - Start directly with content (heading is already defined).
 - Every sentence adds NEW information — no restating what was said before in this article.
 - Use LSI keywords with proper grammatical adaptation.
 - Use formatting that shows EXPERTISE: a short bullet list for practical items, a comparison table for data, bold for key terms. But always have prose too — never a section that is ONLY a list.
-${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}`;
+${hasFactsFromResearch ? '- MUST include the verified facts provided above, integrated naturally.' : '- Write informatively but do NOT invent specific numbers, statistics, or research citations.'}${entityEnrichment}`;
         }
         break;
 
@@ -1597,23 +1633,33 @@ Only include blocks that need trimming. Return ONLY valid JSON.`;
     try {
       const response = await this.chat(systemPrompt, userPrompt, 0.3);
       const cleaned = response.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      if (Array.isArray(parsed)) {
-        // Hard filter: remove protected blocks even if AI included them
-        const filtered = parsed.filter((p: { blockId: number }) => !blockIdsWithLinks.has(p.blockId));
-
-        // Enforce per-block cap: targetWords must be >= 60% of current block word count
-        const blockWordMap = new Map(
-          blocks.filter(b => b.content).map(b => [b.id, b.content!.split(/\s+/).length])
-        );
-        return filtered.map((p: { blockId: number; targetWords: number; reason: string }) => {
-          const currentWords = blockWordMap.get(p.blockId) ?? 0;
-          const minAllowed = Math.round(currentWords * (1 - maxPerBlockCut));
-          return { ...p, targetWords: Math.max(p.targetWords, minAllowed, 50) };
-        });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        logger.error('Smart trim: AI returned invalid JSON', { raw: cleaned.slice(0, 500) });
+        return [];
       }
+      if (!Array.isArray(parsed)) {
+        logger.error('Smart trim: AI returned non-array', { type: typeof parsed, raw: cleaned.slice(0, 300) });
+        return [];
+      }
+      // Hard filter: remove protected blocks even if AI included them
+      const filtered = parsed.filter((p: { blockId: number }) => !blockIdsWithLinks.has(p.blockId));
+
+      // Enforce per-block cap: targetWords must be >= 60% of current block word count
+      const blockWordMap = new Map(
+        blocks.filter(b => b.content).map(b => [b.id, b.content!.split(/\s+/).length])
+      );
+      const result = filtered.map((p: { blockId: number; targetWords: number; reason: string }) => {
+        const currentWords = blockWordMap.get(p.blockId) ?? 0;
+        const minAllowed = Math.round(currentWords * (1 - maxPerBlockCut));
+        return { ...p, targetWords: Math.max(p.targetWords, minAllowed, 50) };
+      });
+      logger.info('Smart trim plan', { blocks: result.length, totalCut: result.reduce((s, r) => s + ((blockWordMap.get(r.blockId) ?? 0) - r.targetWords), 0) });
+      return result;
     } catch (error) {
-      logger.error('Smart trim failed, falling back to empty', { error });
+      logger.error('Smart trim failed (API error)', { error });
     }
     return [];
   }

@@ -142,8 +142,6 @@ export interface GenerationConfig {
   minWords?: number;  // default 1200
   maxWords?: number;  // default 1800
   model?: string;     // OpenRouter model ID, default 'openai/gpt-5.2'
-  mode?: 'v1' | 'v2'; // default 'v1'; 'v2' = Entity + Intent + Evidence pipeline
-  // v2-only: audience context and content directives (stored separately, merged into prompts)
   audience?: string;       // e.g. "Studierende in Deutschland", max 120 chars
   mustCover?: string[];    // Topics/aspects that must be addressed, max 8 items
   mustAvoid?: string[];    // Claims/phrases to never include, max 8 items
